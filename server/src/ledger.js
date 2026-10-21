@@ -128,6 +128,28 @@ export function releaseHold(db, { holdId, reason = null }) {
   });
 }
 
+/**
+ * Admin manual adjustment (positive = grant, negative = debit). Always writes
+ * an `adjust` ledger entry with the acting admin + a mandatory note, and keeps
+ * the lots invariant. Throws if a debit would take the balance below zero.
+ */
+export function adjustCredit(db, { userId, tokens, actor, note }) {
+  return tx(db, () => {
+    if (tokens > 0) {
+      grantCredit(db, { userId, tokens, kind: 'adjust', refType: 'admin', refId: actor, actor, note });
+    } else {
+      if (ledgerBalance(db, userId) + tokens < 0) {
+        const e = new Error('Debit would take the balance below zero.');
+        e.status = 400; e.code = 'insufficient_balance';
+        throw e;
+      }
+      consumeLots(db, userId, -tokens);
+      postLedger(db, { userId, kind: 'adjust', deltaTokens: tokens, refType: 'admin', refId: actor, actor, note });
+    }
+    return ledgerBalance(db, userId);
+  });
+}
+
 export function userLedger(db, userId, limit = 50) {
   return db.prepare('SELECT id, kind, delta_tokens AS deltaTokens, amount_tokens AS amountTokens, balance_after AS balanceAfter, ref_type AS refType, ref_id AS refId, note, created_at AS createdAt FROM ledger WHERE user_id = ? ORDER BY id DESC LIMIT ?')
     .all(userId, limit);

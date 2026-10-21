@@ -28,6 +28,7 @@ export function loadConfig(overrides = {}) {
     host: env.HOST || '127.0.0.1',
     port: int(env.PORT, 7443),
     adminPort: int(env.ADMIN_PORT, 7444),
+    cookieSecure: env.COOKIE_SECURE === '1' || env.COOKIE_SECURE === 'true',
     dbPath: env.DB_PATH || path.join(SERVER_DIR, 'data', 'ronin.db'),
     authSecret: env.AUTH_SECRET || '',
     adminPhones: list(env.ADMIN_PHONES),
