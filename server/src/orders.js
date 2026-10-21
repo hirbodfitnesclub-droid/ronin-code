@@ -15,7 +15,8 @@ import { badRequest, notFound, conflict } from './util.js';
 
 export const MAX_PENDING_PER_USER = 3;
 
-export function createOrder(db, cfg, user, { packId, payerName, cardLast4, reference, paidAtText = null }) {
+export function createOrder(db, cfg, user, { packId, payerName, cardLast4, reference, paidAtText = null, paidAt = null }) {
+  paidAtText = paidAtText ?? paidAt;
   const pack = getPack(db, cfg, packId);
   if (!pack) throw badRequest('pack_not_found', 'Unknown pack.');
   if (typeof payerName !== 'string' || payerName.trim().length < 2 || payerName.trim().length > 100)

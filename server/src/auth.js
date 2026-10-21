@@ -119,15 +119,17 @@ export function authenticate(db, accessToken) {
 export function refreshSession(db, refreshToken) {
   if (!refreshToken) throw unauthorized();
   const hash = sha256Hex(refreshToken);
-  return tx(db, () => {
+  const outcome = tx(db, () => {
     const row = db.prepare('SELECT * FROM refresh_tokens WHERE token_hash = ?').get(hash);
     if (!row) throw unauthorized('invalid_refresh', 'Unknown refresh token.');
     const fam = db.prepare('SELECT * FROM token_families WHERE id = ?').get(row.family_id);
     if (!fam || fam.revoked_at) throw unauthorized('session_revoked', 'Session was revoked.');
     if (row.replaced_by_id || row.used_at) {
       // REUSE DETECTED: a rotated-away token was presented again → treat as theft.
+      // The revocation must COMMIT — so return a marker and throw after the tx,
+      // never throw here (tx would roll the revocation back).
       revokeFamily(db, fam.id, 'refresh_reuse_detected');
-      throw unauthorized('refresh_reuse', 'Refresh token reuse detected. The whole session family was revoked; log in again.');
+      return { reuse: true };
     }
     if (row.expires_at <= Date.now()) throw unauthorized('refresh_expired', 'Refresh token expired.');
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(fam.user_id);
@@ -137,6 +139,10 @@ export function refreshSession(db, refreshToken) {
     db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(Date.now(), fam.device_id);
     return { user: publicUser(user), accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
   });
+  if (outcome?.reuse) {
+    throw unauthorized('refresh_reuse', 'Refresh token reuse detected. The whole session family was revoked; log in again.');
+  }
+  return outcome;
 }
 
 export function revokeFamily(db, familyId, reason = 'logout') {

@@ -1,1 +1,16 @@
-{"dependencies":{},"description":"Ronin Code subscription backend (accounts, credit ledger, metering proxy) + standalone admin panel","engines":{"node":">=22.5"},"name":"ronin-server","private":true,"scripts":{"admin":"node src/admin-main.js","start":"node src/server.js","test":"node --test test/"},"type":"module","version":"1.0.0"}
+{
+  "dependencies": {},
+  "description": "Ronin Code subscription backend (accounts, credit ledger, metering proxy) + standalone admin panel",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "name": "ronin-server",
+  "private": true,
+  "scripts": {
+    "admin": "node src/admin-main.js",
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.mjs"
+  },
+  "type": "module",
+  "version": "1.0.0"
+}
