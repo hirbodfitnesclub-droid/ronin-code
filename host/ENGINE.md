@@ -81,3 +81,23 @@ Version 1.3.0 differs from older expectations:
   leak-free for the MVP.
 - `agent_settled` is not awaited separately: `session.prompt()` already
   resolves after the run (including retries) per `docs/sdk.md`.
+
+## v1 additions (Ronin host layer)
+
+- **Guard extension** (`ronin-guard`, inline factory via
+  `DefaultResourceLoader({ extensionFactories })` + `reload()`): a
+  `tool_call` handler enforces .env protection (blocks read/write/edit/
+  grep/find/ls on `.env*`, and bash commands that reference `.env`, unless
+  the project has an explicit grant) and the approval gate (bash always;
+  write/edit outside the project) whenever Auto mode is off — returning
+  `{ block: true, reason }` on denial. A `tool_result` handler redacts
+  secrets and applies RTK-style compression to bash/read/grep/find/ls
+  output before it re-enters the model context.
+- **Provider errors do not throw.** The agent loop resolves `prompt()` and
+  reports failure as a final assistant message with `stopReason: "error"`
+  (+ `errorMessage`). The host watches `message_end` for that, rethrows,
+  and only then can the router fail over. Usage still arrives on
+  `message_end` / `session.getSessionStats()`.
+- **Multi-key runtime:** `ModelRuntime.setRuntimeApiKey(providerId, key)`
+  is called per attempt, so key rotation/failover needs no session
+  rebuild beyond a fresh `createAgentSession`.

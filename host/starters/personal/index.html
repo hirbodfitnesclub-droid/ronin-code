@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mina Ahmadi — Product Designer</title>
+<meta name="description" content="Mina Ahmadi is a product designer in Tehran crafting calm, useful digital products.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="monogram" href="#top" aria-label="Mina Ahmadi home">M.A.</a>
+  <nav class="site-nav" aria-label="Primary">
+    <a href="#about">About</a><a href="#work">Work</a><a href="#services">Services</a><a href="#contact" class="nav-cta">Get in touch</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <p class="eyebrow">Product designer — Tehran, working worldwide</p>
+    <h1>Mina<br>Ahmadi</h1>
+    <p class="hero-lede">I design digital products that feel inevitable — clear enough for a first-time user, considered enough to still be right a year later. Currently lead product designer at a fintech studio; previously with health and education teams across three continents.</p>
+    <div class="hero-meta">
+      <span>9 years designing</span><span aria-hidden="true">·</span><span>40+ products shipped</span><span aria-hidden="true">·</span><span>EN / FA</span>
+    </div>
+  </section>
+
+  <section class="section" id="about">
+    <p class="section-label">About</p>
+    <div class="two-col">
+      <div class="portrait" aria-hidden="true"><span>م</span></div>
+      <div class="prose">
+        <p class="lead">Good design, to me, is mostly editing — removing everything that competes with the one thing a person came to do.</p>
+        <p>I started in graphic design in Tehran, moved into product work when I realised the most interesting layout problem is a flow, not a page. Since then I've led design for banking apps used by millions, a telehealth service for rural clinics, and tools for teachers who have ten minutes, not ten hours.</p>
+        <p>Outside client work I mentor early-career designers, collect Persian typography specimens, and keep a small, stubborn garden.</p>
+        <ul class="facts">
+          <li><strong>Based in</strong> Tehran, Iran (UTC+3:30)</li>
+          <li><strong>Focus</strong> Product strategy, UX, design systems</li>
+          <li><strong>Tools</strong> Figma, prototyping, a paper notebook first</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="work">
+    <p class="section-label">Selected work · 2023 — 2026</p>
+    <ul class="works">
+      <li><a class="work" href="#contact"><span class="work-year">2026</span><span class="work-main"><strong>Saman Bank — Everyday banking, redesigned</strong><small>Lead designer · Mobile app, design system</small></span><span class="work-arrow" aria-hidden="true">→</span></a></li>
+      <li><a class="work" href="#contact"><span class="work-year">2025</span><span class="work-main"><strong>Niloofar Health — Telehealth for rural clinics</strong><small>Product design · Web &amp; tablet</small></span><span class="work-arrow" aria-hidden="true">→</span></a></li>
+      <li><a class="work" href="#contact"><span class="work-year">2025</span><span class="work-main"><strong>Klass — Planning tools for teachers</strong><small>UX &amp; brand · Web app</small></span><span class="work-arrow" aria-hidden="true">→</span></a></li>
+      <li><a class="work" href="#contact"><span class="work-year">2024</span><span class="work-main"><strong>Parvaz Travel — Booking without the dread</strong><small>Lead designer · Web, conversion +31%</small></span><span class="work-arrow" aria-hidden="true">→</span></a></li>
+      <li><a class="work" href="#contact"><span class="work-year">2023</span><span class="work-main"><strong>Ketabkhaneh — A reading tracker in Persian &amp; English</strong><small>Design &amp; art direction · Mobile app</small></span><span class="work-arrow" aria-hidden="true">→</span></a></li>
+    </ul>
+  </section>
+
+  <section class="section" id="services">
+    <p class="section-label">Services</p>
+    <div class="services">
+      <article class="service"><h3>Product design</h3><p>End-to-end design for web and mobile — research, flows, interfaces, and the handoff developers thank you for.</p><p class="service-price">From $3,500 / project</p></article>
+      <article class="service"><h3>Design systems</h3><p>Component libraries and guidelines that keep a growing product coherent long after launch day.</p><p class="service-price">From $2,800 / project</p></article>
+      <article class="service"><h3>UX review</h3><p>A written, prioritised audit of your product with recordings of real users — and fixes you can ship this sprint.</p><p class="service-price">From $900 / review</p></article>
+    </div>
+  </section>
+
+  <section class="section contact" id="contact">
+    <p class="section-label">Contact</p>
+    <h2>Have a product<br>that needs clarity?</h2>
+    <p class="contact-lede">I take on two projects per quarter. Tell me a little about yours — I reply within two working days, in English or Persian.</p>
+    <form id="contactForm" novalidate>
+      <div class="field">
+        <label for="fName">Your name</label>
+        <input id="fName" name="name" type="text" autocomplete="name" placeholder="e.g. Sara Rahimi">
+        <p class="error" id="eName" role="alert"></p>
+      </div>
+      <div class="field">
+        <label for="fEmail">Email</label>
+        <input id="fEmail" name="email" type="email" autocomplete="email" placeholder="you@company.com">
+        <p class="error" id="eEmail" role="alert"></p>
+      </div>
+      <div class="field field-wide">
+        <label for="fMsg">About your project</label>
+        <textarea id="fMsg" name="message" rows="5" placeholder="What are you building, who is it for, and what does success look like?"></textarea>
+        <p class="error" id="eMsg" role="alert"></p>
+      </div>
+      <button class="button" type="submit">Send message</button>
+      <p class="form-note" id="formNote" role="status"></p>
+    </form>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <p>© 2026 Mina Ahmadi · Tehran</p>
+  <nav aria-label="Footer"><a href="#about">About</a><a href="#work">Work</a><a href="#contact">Contact</a><a href="mailto:hello@minaahmadi.example">hello@minaahmadi.example</a></nav>
+  <p class="fineprint">A starter template — replace the name, work, and words with your own.</p>
+</footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atelier — Design & Product Studio</title>
+<meta name="description" content="Atelier is a small design and product studio building calm, considered digital products.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site-header" id="siteHeader">
+  <a class="wordmark" href="#top" aria-label="Atelier home">Atelier<span>.</span></a>
+  <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="siteNav">Menu</button>
+  <nav class="site-nav" id="siteNav" aria-label="Primary">
+    <a href="#work">Work</a><a href="#studio">Studio</a><a href="#pricing">Pricing</a><a href="#contact">Contact</a>
+    <a class="nav-cta" href="#pricing">Start a project</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="hero reveal">
+    <p class="eyebrow">Design &amp; product studio — Est. 2018</p>
+    <h1>We design products<br>people <em>linger</em> on.</h1>
+    <p class="hero-lede">Atelier is a small, senior team partnering with founders and product leads to turn early ideas into quiet, confident software — designed properly, built to last.</p>
+    <div class="hero-actions">
+      <a class="button button-primary" href="#pricing">Start a project</a>
+      <a class="button button-ghost" href="#work">See selected work</a>
+    </div>
+    <dl class="hero-stats">
+      <div><dt>64</dt><dd>Products shipped</dd></div>
+      <div><dt>11</dt><dd>Countries, one studio</dd></div>
+      <div><dt>92%</dt><dd>Clients who return</dd></div>
+    </dl>
+  </section>
+
+  <section class="logo-strip reveal" aria-label="Clients">
+    <span>Northwind</span><span>FERN &amp; CO</span><span>Halcyon</span><span>mera</span><span>Fieldnotes</span><span>OSTARA</span>
+  </section>
+
+  <section class="section reveal" id="studio">
+    <div class="section-head">
+      <p class="eyebrow">What we do</p>
+      <h2>Small team.<br>Complete craft.</h2>
+      <p>Strategy, interface, and engineering under one roof — so nothing is lost between a good idea and a finished product.</p>
+    </div>
+    <div class="features">
+      <article class="feature"><span class="feature-num">01</span><h3>Product strategy</h3><p>We start with the problem, not the screen. Research, positioning, and a roadmap your whole team can repeat back.</p></article>
+      <article class="feature"><span class="feature-num">02</span><h3>Interface design</h3><p>Calm, legible interfaces with a real typographic hierarchy. Designed in systems, so they scale without drifting.</p></article>
+      <article class="feature"><span class="feature-num">03</span><h3>Build &amp; launch</h3><p>We ship the thing ourselves — accessible, fast, and instrumented — then stay through launch week and beyond.</p></article>
+      <article class="feature"><span class="feature-num">04</span><h3>Brand systems</h3><p>Identity that survives contact with reality: wordmarks, type, colour, and the guidelines people actually use.</p></article>
+    </div>
+  </section>
+
+  <section class="section reveal" id="work">
+    <div class="section-head">
+      <p class="eyebrow">Selected work</p>
+      <h2>Recent engagements</h2>
+    </div>
+    <div class="showcase">
+      <article class="show-card show-card--wide">
+        <div class="show-visual visual-fern" aria-hidden="true"><span class="mock-line w70"></span><span class="mock-line w45"></span><span class="mock-block"></span><span class="mock-pill"></span></div>
+        <div class="show-meta"><h3>Fern &amp; Co — Booking, reimagined</h3><p>A slower, clearer way to book garden stays. Conversion up 38% in the first quarter after relaunch.</p><span class="tag">Product · Web</span></div>
+      </article>
+      <article class="show-card">
+        <div class="show-visual visual-halcyon" aria-hidden="true"><span class="mock-ring"></span><span class="mock-line w60"></span><span class="mock-line w40"></span></div>
+        <div class="show-meta"><h3>Halcyon — Sleep, softly</h3><p>Companion app for a sleep clinic, designed to be glanced at — never scrolled.</p><span class="tag">Mobile · Brand</span></div>
+      </article>
+      <article class="show-card">
+        <div class="show-visual visual-mera" aria-hidden="true"><span class="mock-bar b1"></span><span class="mock-bar b2"></span><span class="mock-bar b3"></span><span class="mock-bar b4"></span></div>
+        <div class="show-meta"><h3>Mera — Banking for freelancers</h3><p>Invoicing and tax, folded into one unhurried dashboard.</p><span class="tag">Fintech · Product</span></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section reveal" id="pricing">
+    <div class="section-head centred">
+      <p class="eyebrow">Engagements</p>
+      <h2>Clear scope, fixed price.</h2>
+      <p>No hourly billing, no surprises. Pick a shape of work — we confirm fit on a short call first.</p>
+      <div class="billing-toggle" role="group" aria-label="Billing period">
+        <button class="toggle-btn is-active" data-period="project">Per project</button>
+        <button class="toggle-btn" data-period="retainer">Monthly retainer</button>
+      </div>
+    </div>
+    <div class="pricing">
+      <article class="price-card">
+        <h3>Sprint</h3><p class="price-desc">Two weeks to answer one hard question.</p>
+        <p class="price"><span class="price-amount" data-project="$4,800" data-retainer="$4,200">$4,800</span><span class="price-per" data-project=" / project" data-retainer=" / month"> / project</span></p>
+        <ul><li>Research &amp; concept in 10 days</li><li>One direction, fully explored</li><li>Prototype you can test with users</li><li>Findings report &amp; next steps</li></ul>
+        <a class="button button-ghost wide" href="#contact">Book a sprint</a>
+      </article>
+      <article class="price-card featured">
+        <p class="badge">Most booked</p>
+        <h3>Studio</h3><p class="price-desc">A complete product, designed and built.</p>
+        <p class="price"><span class="price-amount" data-project="$18,000" data-retainer="$9,500">$18,000</span><span class="price-per" data-project=" / project" data-retainer=" / month"> / project</span></p>
+        <ul><li>Strategy, design &amp; build included</li><li>Weekly demos, shared workspace</li><li>Design system &amp; documentation</li><li>Launch support for 30 days</li></ul>
+        <a class="button button-primary wide" href="#contact">Start with Studio</a>
+      </article>
+      <article class="price-card">
+        <h3>Partner</h3><p class="price-desc">An embedded team, quarter by quarter.</p>
+        <p class="price"><span class="price-amount" data-project="$36,000" data-retainer="$12,000">$36,000</span><span class="price-per" data-project=" / quarter" data-retainer=" / month"> / quarter</span></p>
+        <ul><li>Dedicated designer + engineer</li><li>Roadmap planning with your team</li><li>Priority response, same day</li><li>Quarterly brand &amp; UX review</li></ul>
+        <a class="button button-ghost wide" href="#contact">Talk to us</a>
+      </article>
+    </div>
+  </section>
+
+  <section class="testimonial reveal">
+    <blockquote>“Atelier took a product we were apologising for and made it the reason clients sign. They are the first studio I recommend — and the only one I rehire.”</blockquote>
+    <p class="testimonial-by"><strong>Sara Lindqvist</strong> · Founder, Fern &amp; Co</p>
+  </section>
+
+  <section class="cta reveal" id="contact">
+    <h2>Tell us what you're making.</h2>
+    <p>Two project slots open each quarter. Write a few honest lines — we reply within two working days.</p>
+    <a class="button button-primary" href="mailto:hello@atelier.example">hello@atelier.example</a>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <a class="wordmark" href="#top">Atelier<span>.</span></a>
+  <p>Design &amp; product studio. Working worldwide, based wherever the light is good.</p>
+  <nav aria-label="Footer"><a href="#work">Work</a><a href="#studio">Studio</a><a href="#pricing">Pricing</a></nav>
+  <p class="fineprint">© 2026 Atelier Studio. A starter template — make it yours.</p>
+</footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Provider, type Status } from '../api';
+import { useLang, type Lang } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -10,48 +11,63 @@ interface Props {
 }
 
 export default function SettingsModal({ open, providers, status, onClose, onSaved }: Props) {
+  const { t, fmtNum } = useLang();
   const [provider, setProvider] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
-  const [modelTouched, setModelTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [saveError, setSaveError] = useState('');
 
+  // v1 sections
+  const [language, setLanguage] = useState<Lang>('en');
+  const [extraKeys, setExtraKeys] = useState<string[]>(['']);
+  const [failoverOn, setFailoverOn] = useState(true);
+  const [failoverOrder, setFailoverOrder] = useState<string[]>([]);
+  const [envAccess, setEnvAccess] = useState(false);
+  const [projectMode, setProjectMode] = useState<'auto' | 'plan' | ''>('');
+  const [budget, setBudget] = useState('');
+  const [rtkSaved, setRtkSaved] = useState(0);
+
   const selected = providers.find((p) => p.id === provider);
+  const others = providers.filter((p) => p.id !== provider);
 
   /* Seed the form each time the drawer opens. */
   useEffect(() => {
     if (!open) return;
-    const initial =
-      providers.find((p) => p.id === status?.provider) ?? providers[0];
+    const initial = providers.find((p) => p.id === status?.provider) ?? providers[0];
     if (initial) {
       setProvider(initial.id);
       setBaseUrl(initial.baseUrl ?? '');
       setModel(
-        status?.provider === initial.id && status?.model
-          ? status.model
-          : initial.defaultModel,
+        status?.provider === initial.id && status?.model ? status.model : initial.defaultModel,
       );
+      setExtraKeys(['']);
     }
     setApiKey('');
-    setModelTouched(false);
     setTestResult(null);
     setSaveError('');
+    setLanguage(status?.language ?? 'en');
+    setFailoverOn(status?.failover ?? true);
+    setEnvAccess(status?.envAccess ?? false);
+    setProjectMode(status?.projectMode ?? '');
+    setBudget(status?.budgetCapUsd ? String(status.budgetCapUsd) : '');
+    void api.usage().then((u) => setRtkSaved(u.rtk.savedChars)).catch(() => setRtkSaved(0));
   }, [open, providers, status]);
 
   if (!open) return null;
 
-  const pickProvider = (id: string) => {
-    setProvider(id);
+  const pickProvider = (id_: string) => {
+    setProvider(id_);
     setTestResult(null);
-    const next = providers.find((p) => p.id === id);
-    if (next) setBaseUrl(next.baseUrl ?? '');
-    if (next && !modelTouched) setModel(next.defaultModel);
-    if (next && modelTouched) setModel(next.defaultModel);
-    setModelTouched(false);
+    const next = providers.find((p) => p.id === id_);
+    if (next) {
+      setBaseUrl(next.baseUrl ?? '');
+      setModel(next.defaultModel);
+      setExtraKeys(['']);
+    }
   };
 
   const save = async () => {
@@ -60,17 +76,41 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
     try {
       await api.saveSettings({
         provider,
-        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         ...(model.trim() ? { model: model.trim() } : {}),
         ...(provider === 'custom' ? { baseUrl: baseUrl.trim() } : {}),
+        language,
+        failover: failoverOn,
+        failoverOrder,
+        envAccess,
+        projectMode: projectMode === '' ? null : projectMode,
+        budgetCapUsd: budget.trim() ? Number(budget) || null : null,
       });
+      // Main key field: typing replaces the provider's first key slot.
+      if (apiKey.trim()) {
+        await api.saveSettings({ provider, apiKey: apiKey.trim() });
+      }
+      // Extra rows: typed keys are appended to the provider's list.
+      const newExtras = extraKeys.map((v) => v.trim()).filter(Boolean);
+      if (newExtras.length) {
+        await api.saveSettings({ addKeys: newExtras, keysProvider: provider });
+      }
       setApiKey('');
+      setExtraKeys(['']);
       onSaved();
       onClose();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Could not save settings.');
+      setSaveError(err instanceof Error ? err.message : t('settings.saveFailed'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const removeKey = async (index: number) => {
+    try {
+      await api.saveSettings({ removeKeyIndex: index, keysProvider: provider });
+      onSaved();
+    } catch {
+      /* non-fatal */
     }
   };
 
@@ -78,7 +118,6 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
     setTesting(true);
     setTestResult(null);
     try {
-      // Persist a freshly-typed key first so the test exercises it.
       if (apiKey.trim() || provider === 'custom') {
         await api.saveSettings({
           provider,
@@ -93,7 +132,7 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
     } catch (err) {
       setTestResult({
         ok: false,
-        message: err instanceof Error ? err.message : 'Connection test failed.',
+        message: err instanceof Error ? err.message : t('settings.testFailed'),
       });
     } finally {
       setTesting(false);
@@ -103,23 +142,32 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
   return (
     <div className="modal-backdrop" onMouseDown={onClose} role="presentation">
       <div
-        className="modal"
+        className="modal modal--settings"
         role="dialog"
         aria-modal="true"
-        aria-label="Settings"
+        aria-label={t('settings.title')}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h2>Settings</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close settings">
+          <h2>{t('settings.title')}</h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('settings.close')}>
             ×
           </button>
         </div>
 
         <label className="field">
-          <span className="field-label">Provider</span>
+          <span className="field-label">{t('settings.language')}</span>
+          <select value={language} onChange={(e) => setLanguage(e.target.value as Lang)}>
+            <option value="en">English</option>
+            <option value="fa">فارسی</option>
+          </select>
+          <span className="field-hint">{t('settings.languageHint')}</span>
+        </label>
+
+        <label className="field">
+          <span className="field-label">{t('settings.provider')}</span>
           <select value={provider} onChange={(e) => pickProvider(e.target.value)}>
-            {providers.length === 0 && <option value="">No providers available</option>}
+            {providers.length === 0 && <option value="">{t('settings.noProviders')}</option>}
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
@@ -130,51 +178,167 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
 
         {provider === 'custom' && (
           <label className="field">
-            <span className="field-label">Endpoint URL</span>
+            <span className="field-label">{t('settings.endpointUrl')}</span>
             <input
               type="url"
+              dir="ltr"
               autoComplete="off"
               spellCheck={false}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://your-endpoint.example/v1"
             />
-            <span className="field-hint">Any OpenAI-compatible endpoint — Ronin talks to it directly.</span>
+            <span className="field-hint">{t('settings.endpointHint')}</span>
           </label>
         )}
 
         <label className="field">
-          <span className="field-label">API key</span>
+          <span className="field-label">{t('settings.apiKey')}</span>
           <input
             type="password"
+            dir="ltr"
             autoComplete="off"
             spellCheck={false}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={
               selected?.hasKey
-                ? `${selected.maskedKey || '••••••••'} — leave blank to keep`
-                : 'Paste your API key'
+                ? t('settings.keepKey', { masked: selected.maskedKey || '••••••••' })
+                : t('settings.apiKeyPlaceholder')
             }
           />
-          <span className="field-hint">Keys stay on this machine only — never sent anywhere else.</span>
+          <span className="field-hint">{t('settings.keysHint')}</span>
         </label>
 
         <label className="field">
-          <span className="field-label">Model</span>
+          <span className="field-label">{t('settings.model')}</span>
           <input
             type="text"
+            dir="ltr"
             autoComplete="off"
             spellCheck={false}
             value={model}
-            onChange={(e) => {
-              setModel(e.target.value);
-              setModelTouched(true);
-            }}
-            placeholder={selected?.defaultModel ?? 'Model id'}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={selected?.defaultModel ?? t('settings.modelPlaceholder')}
           />
-          <span className="field-hint">Prefilled with the provider default — edit for a custom model id.</span>
+          <span className="field-hint">{t('settings.modelHint')}</span>
         </label>
+
+        {/* ---------------- router & failover ---------------- */}
+        <div className="settings-section">
+          <h3>{t('settings.router')}</h3>
+          <span className="field-hint">{t('settings.routerHint')}</span>
+
+          {(selected?.keys ?? []).map((k) => (
+            <div key={k.index} className="key-row">
+              <span className="key-stats" dir="ltr">{k.maskedKey}</span>
+              <span className="key-stats">
+                {t('settings.requests', { count: fmtNum(k.requests) })}
+                {k.coolingDown && <span className="cooling"> · {t('settings.cooling')}</span>}
+              </span>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => void removeKey(k.index)}>
+                {t('settings.removeKey')}
+              </button>
+            </div>
+          ))}
+
+          {extraKeys.map((v, i) => (
+            <div key={i} className="key-row">
+              <input
+                type="password"
+                dir="ltr"
+                autoComplete="off"
+                spellCheck={false}
+                value={v}
+                onChange={(e) => {
+                  const next = [...extraKeys];
+                  next[i] = e.target.value;
+                  setExtraKeys(next);
+                }}
+                placeholder={t('settings.apiKeyPlaceholder')}
+                aria-label={t('settings.keyN', { n: i + 2 })}
+              />
+              {i === extraKeys.length - 1 && (
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setExtraKeys([...extraKeys, ''])}>
+                  {t('settings.addKey')}
+                </button>
+              )}
+            </div>
+          ))}
+
+          <div className="switch-row">
+            <span className="switch-label">{t('settings.failover')}</span>
+            <button
+              type="button"
+              className={`switch ${failoverOn ? 'switch--on' : ''}`}
+              onClick={() => setFailoverOn((v) => !v)}
+              aria-pressed={failoverOn}
+              aria-label={t('settings.failover')}
+            />
+          </div>
+
+          {failoverOn && others.length > 0 && (
+            <label className="field">
+              <span className="field-label">{t('settings.failoverOrder')}</span>
+              <select
+                className="failover-select"
+                value={failoverOrder[0] ?? ''}
+                onChange={(e) => {
+                  const first = e.target.value;
+                  const rest = others.map((p) => p.id).filter((x) => x !== first);
+                  setFailoverOrder(first ? [first, ...rest] : []);
+                }}
+              >
+                <option value="">—</option>
+                {others.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {rtkSaved > 0 && <span className="field-hint">{t('settings.rtkSaved', { chars: fmtNum(rtkSaved) })}</span>}
+        </div>
+
+        {/* ---------------- safety ---------------- */}
+        <div className="settings-section">
+          <h3>{t('settings.safety')}</h3>
+          <div className="switch-row">
+            <span className="switch-label">{t('settings.envAccess')}</span>
+            <button
+              type="button"
+              className={`switch ${envAccess ? 'switch--on' : ''}`}
+              onClick={() => setEnvAccess((v) => !v)}
+              aria-pressed={envAccess}
+              aria-label={t('settings.envAccess')}
+            />
+          </div>
+          <span className="field-hint">{t('settings.envHint')}</span>
+
+          <label className="field">
+            <span className="field-label">{t('settings.projectMode')}</span>
+            <select value={projectMode} onChange={(e) => setProjectMode(e.target.value as 'auto' | 'plan' | '')}>
+              <option value="">{t('settings.modeDefault')}</option>
+              <option value="auto">{t('settings.modeAuto')}</option>
+              <option value="plan">{t('settings.modePlan')}</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span className="field-label">{t('settings.budget')}</span>
+            <input
+              type="number"
+              dir="ltr"
+              min="0"
+              step="0.5"
+              value={budget}
+              onChange={(e) => setBudget(e.target.value)}
+              placeholder={t('settings.budgetPlaceholder')}
+            />
+            <span className="field-hint">{t('settings.budgetHint')}</span>
+          </label>
+        </div>
 
         {testResult && (
           <p className={`test-result ${testResult.ok ? 'test-result--ok' : 'test-result--bad'}`}>
@@ -184,21 +348,11 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
         {saveError && <p className="test-result test-result--bad">{saveError}</p>}
 
         <div className="modal-actions">
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={test}
-            disabled={testing || saving || !provider}
-          >
-            {testing ? 'Testing…' : 'Test connection'}
+          <button type="button" className="btn btn--ghost" onClick={test} disabled={testing || saving || !provider}>
+            {testing ? t('settings.testing') : t('settings.test')}
           </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={save}
-            disabled={saving || !provider}
-          >
-            {saving ? 'Saving…' : 'Save'}
+          <button type="button" className="btn btn--primary" onClick={save} disabled={saving || !provider}>
+            {saving ? t('settings.saving') : t('settings.save')}
           </button>
         </div>
       </div>
