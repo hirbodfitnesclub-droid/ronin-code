@@ -1,0 +1,10 @@
+# Rust / Tauri build output
+/src-tauri/target
+
+# Staged at build time by stage.mjs — never committed
+/src-tauri/resources/host
+/src-tauri/resources/gui
+/src-tauri/binaries/node*
+
+# Windows build artefacts
+*.exe

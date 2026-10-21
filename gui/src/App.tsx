@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, openStream, type ActivityKind, type ChangedFile, type Provider, type Status, type StreamEvent } from './api';
+import { LanguageProvider, type Lang } from './i18n';
 import ActivityVisual from './components/ActivityVisual';
 import ChangesCard from './components/ChangesCard';
 import Logo from './components/Logo';
+import Onboarding from './components/Onboarding';
 import SettingsModal from './components/SettingsModal';
 import RichText from './components/RichText';
 
@@ -30,6 +32,18 @@ export default function App() {
   const [previewKey, setPreviewKey] = useState(0);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [notice, setNotice] = useState('');
+  const [langOverride, setLangOverride] = useState<Lang | null>(null);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+
+  const lang: Lang = langOverride ?? status?.language ?? 'en';
+
+  /* Keep <html lang/dir> in sync so RTL mirroring follows the language. */
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+  }, [lang]);
+
+  const showOnboarding = Boolean(status) && !status?.onboarded && !onboardingDismissed;
 
   const runningRef = useRef(false);
   const streamingIdRef = useRef<number | null>(null);
@@ -262,6 +276,7 @@ export default function App() {
   const isEmpty = items.length === 0 && !running;
 
   return (
+    <LanguageProvider lang={lang}>
     <div className="app">
       {/* ------------------------------ header ------------------------------ */}
       <header className="header">
@@ -473,6 +488,21 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         onSaved={() => void refreshMeta()}
       />
+
+      {showOnboarding && (
+        <Onboarding
+          providers={providers}
+          status={status}
+          onLanguage={setLangOverride}
+          onDone={() => {
+            setOnboardingDismissed(true);
+            void refreshMeta();
+          }}
+          onCreateStarter={() => void createStarter()}
+          onOpenProject={() => void openProject()}
+        />
+      )}
     </div>
+    </LanguageProvider>
   );
 }

@@ -1,0 +1,21 @@
+[package]
+name = "ronin-code"
+version = "0.1.0"
+description = "Ronin Code — a beautiful, simple vibe-coding tool"
+edition = "2021"
+
+# The library is what main.rs calls into; this layout is the Tauri v2 default
+# and keeps the same code working for a future mobile target.
+[lib]
+name = "ronin_code_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
