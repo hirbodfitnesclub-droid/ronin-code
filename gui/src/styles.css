@@ -345,7 +345,7 @@ button:disabled { cursor: default; opacity: 0.45; }
 .change-tile .change-dot { align-self: flex-start; }
 .change-more { align-self: center; color: var(--text-faint); font-size: 12.5px; padding: 0 4px; }
 
-.changes-summary { margin-top: 12px; font-size: 13.5px; font-weight: 550; }
+.changes-summary { margin-top: 12px; font-size: 13.5px; font-weight: 550; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .changes-actions { display: flex; gap: 8px; margin-top: 10px; }
 .chevron { display: inline-block; margin-inline-start: 5px; transition: transform 0.18s ease; font-size: 11px; }
 .chevron--open { transform: rotate(180deg); }

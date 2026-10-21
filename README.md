@@ -42,18 +42,53 @@ the session-token script to the host, so it works exactly like production.
 
 ## First steps
 
-1. Click **Create starter project** — Ronin Code scaffolds a small web app
-   under `~/ronin-projects/` and opens its live preview.
-2. Describe what you want in plain words and press Enter.
-3. While the agent works you will see visual activity only — an ambient
+1. On first run, a short onboarding walks you through language, provider key
+   and your first project.
+2. Click **Create starter project** — pick a tasteful template (studio
+   landing, analytics dashboard, personal site) or the classic starter;
+   Ronin Code scaffolds it under `~/ronin-projects/` with a live preview.
+3. Describe what you want in plain words and press Enter.
+4. While the agent works you will see visual activity only — an ambient
    presence, scanning files, streaming lines, a terminal pulse. No status
    text, no logs.
-4. Afterwards a **Changes** card summarises what changed, with **Undo** to
-   roll the whole turn back and **Details** if you want the plain file list.
-5. To go live, open **Settings**, pick your provider, paste your API key and
+5. Afterwards a **Changes** card summarises what changed, with a real
+   **Diff** view, **Undo**, and one-click named **checkpoints**.
+6. To go live, open **Settings**, pick your provider, paste your API key and
    press **Test connection**, then Save. Without a key, Ronin Code runs in
    clearly-labelled **Preview mode**, which simulates the full flow without
    touching your files.
+
+## v1 highlights
+
+- **Trust layer** — commands and writes outside your project ask first
+  (visual approval card). **Auto** mode in the header skips the asks;
+  checkpoints and Undo stay on. `.env` files are protected by default,
+  secrets are redacted from tool output before it reaches the model, and a
+  per-project toggle can explicitly allow `.env` access.
+- **Router brain** — several keys per provider with rotation, failure
+  cooldowns and automatic failover on rate-limit / server errors, plus
+  RTK-style compression of tool output (with a savings counter).
+- **Cost center** — every turn is priced and shown on its Changes card and
+  in the header session total; an optional budget cap warns and then
+  blocks new turns.
+- **Plan mode** — the agent first proposes a visual step plan; you approve
+  (or reply to revise) and steps tick off live as it builds.
+- **Idea section** — one line is enough: Ronin shapes audience, features
+  and a build plan into cards, then builds it for real.
+- **Publish** — download the project as a .zip or export a static `dist/`
+  copy, with plain-language guidance on hosting and domains.
+- **Bilingual** — full English / فارسی interface with RTL mirroring
+  (Vazirmatn bundled locally), switchable in Settings or onboarding.
+- **Windows app** — a Tauri shell under `desktop/` packages this exact
+  interface + host into an NSIS installer (see `desktop/README.md`).
+
+## Tests
+
+```bash
+node host/test/e2e.mjs   # 29 checks: real engine vs a mock provider —
+                         # approvals, Auto, .env, redaction, RTK,
+                         # failover, cost, plan mode, ideas
+```
 
 ## Your data
 
@@ -72,8 +107,10 @@ carrying your per-run session token.
 ## Layout
 
 - `gui/` — the Ronin Code interface (React + Vite + TypeScript). It talks to
-  the host only through one versioned local API, so the same interface can
-  later be packaged into a desktop shell unchanged.
+  the host only through one versioned local API, so the same interface is
+  packaged into the desktop shell unchanged.
 - `host/` — the Ronin host (Node). Serves the interface, the project preview
-  and the API; runs the coding engine in-process; owns keys, sessions and
-  snapshots.
+  and the API; runs the coding engine in-process; owns keys, sessions,
+  snapshots, approvals, routing and usage.
+- `desktop/` — the Tauri v2 Windows shell (sidecar host, NSIS installer,
+  updater wiring) and the release staging script.

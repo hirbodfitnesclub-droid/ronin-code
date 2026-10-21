@@ -181,7 +181,7 @@ const en = {
 export type StringKey = keyof typeof en;
 
 const fa: Record<StringKey, string> = {
-  'app.tagline': 'با کلمات ساده توضیح بده چی می‌خوای؛ رونین کد می‌سازدش و تو زنده تماشا می‌کنی که سمت راست ظاهر می‌شه.',
+  'app.tagline': 'با کلمات ساده توضیح بده چی می‌خوای؛ رونین کد می‌سازدش و تو زنده تماشا می‌کنی که همین‌جا ظاهر می‌شه.',
   'app.whatBuild': 'چی می‌خوای بسازی؟',
   'app.openProject': 'باز کردن پروژه',
   'app.createStarter': 'ساخت پروژه‌ی شروع',
