@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gui-and-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install (all workspaces)
+        run: npm run install:all
+      - name: Host syntax check
+        run: node --check host/src/server.js
+      - name: GUI typecheck + build
+        run: npm run build
