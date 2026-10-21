@@ -857,6 +857,7 @@ async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, ma
   let toolEnds = 0;
   let editedDone = false;
   let assistantText = "";
+  let providerError = null;
   const usage = { input: 0, output: 0, costTotal: 0 };
 
   const endThinking = () => {
@@ -892,6 +893,12 @@ async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, ma
           usage.input += u.input || 0;
           usage.output += u.output || 0;
           usage.costTotal += (u.cost && u.cost.total) || 0;
+        }
+        // The engine reports provider failures as an assistant message with
+        // stopReason "error" instead of throwing — surface it as a throw so
+        // the router can fail over to the next key/provider.
+        if (event.message && event.message.stopReason === "error") {
+          providerError = event.message.errorMessage || "The provider returned an error.";
         }
       } else if (event.type === "tool_execution_start") {
         endThinking();
@@ -929,6 +936,7 @@ async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, ma
     endThinking();
     for (const a of toolActivities.values()) broadcast({ type: "activity_end", activityId: a.activityId, kind: a.kind });
     toolActivities.clear();
+    if (providerError) throw new Error(providerError);
 
     let finalText = assistantText;
     try {
@@ -1446,7 +1454,16 @@ async function handleApi(req, res, url) {
     if (body.apiKey !== undefined) {
       const auth = loadAuth();
       if (body.apiKey === "") delete auth[config.provider];
-      else if (typeof body.apiKey === "string") auth[config.provider] = [body.apiKey];
+      else if (typeof body.apiKey === "string") {
+        // Replace the first key slot in place (multi-key lists survive).
+        const list = keyList(auth[config.provider]);
+        if (list.length) {
+          list[0] = body.apiKey;
+          auth[config.provider] = list;
+        } else {
+          auth[config.provider] = [body.apiKey];
+        }
+      }
       saveAuth(auth);
     }
     if (body.apiKeys !== undefined) {
@@ -1455,6 +1472,26 @@ async function handleApi(req, res, url) {
       if (Array.isArray(body.apiKeys)) {
         const list = body.apiKeys.filter((k) => typeof k === "string" && k.trim()).map((k) => k.trim());
         const auth = loadAuth();
+        if (list.length) auth[target] = list; else delete auth[target];
+        saveAuth(auth);
+      }
+    }
+    if (body.addKeys !== undefined && Array.isArray(body.addKeys)) {
+      const target = body.keysProvider && providerById(body.keysProvider) ? body.keysProvider : config.provider;
+      const auth = loadAuth();
+      const list = keyList(auth[target]);
+      for (const k of body.addKeys) {
+        if (typeof k === "string" && k.trim() && !list.includes(k.trim())) list.push(k.trim());
+      }
+      if (list.length) auth[target] = list;
+      saveAuth(auth);
+    }
+    if (body.removeKeyIndex !== undefined && typeof body.removeKeyIndex === "number") {
+      const target = body.keysProvider && providerById(body.keysProvider) ? body.keysProvider : config.provider;
+      const auth = loadAuth();
+      const list = keyList(auth[target]);
+      if (body.removeKeyIndex >= 0 && body.removeKeyIndex < list.length) {
+        list.splice(body.removeKeyIndex, 1);
         if (list.length) auth[target] = list; else delete auth[target];
         saveAuth(auth);
       }

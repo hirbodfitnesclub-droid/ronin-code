@@ -189,6 +189,8 @@ export interface SettingsBody {
   provider?: string;
   apiKey?: string;
   apiKeys?: string[];
+  addKeys?: string[];
+  removeKeyIndex?: number;
   keysProvider?: string;
   model?: string;
   baseUrl?: string;

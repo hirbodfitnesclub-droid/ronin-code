@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { ChangedFile, Mode } from '../api';
+import { api, type ChangedFile, type DiffFile, type Mode } from '../api';
+import { useLang } from '../i18n';
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -12,17 +13,79 @@ interface Props {
   onUndo: () => void;
   undoing: boolean;
   undone: boolean;
+  costUsd?: number;
+  costEstimated?: boolean;
 }
 
-export default function ChangesCard({ files, mode, onUndo, undoing, undone }: Props) {
+function DiffBlock({ file }: { file: DiffFile }) {
+  const { t } = useLang();
+  if (file.diff === null) {
+    return (
+      <div className="diff-file">
+        <div className="diff-file-head">{file.path}</div>
+        <p className="diff-note">{t('changes.largeFile')}</p>
+      </div>
+    );
+  }
+  if (!file.diff) return null;
+  const lines = file.diff.split('\n').slice(2); // skip ---/+++ headers
+  return (
+    <div className="diff-file">
+      <div className="diff-file-head">{file.path}</div>
+      <pre className="diff-body">
+        {lines.map((line, i) => {
+          const cls = line.startsWith('+')
+            ? 'diff-line--add'
+            : line.startsWith('-')
+              ? 'diff-line--del'
+              : line.startsWith('@@')
+                ? 'diff-line--hunk'
+                : '';
+          return (
+            <div key={i} className={`diff-line ${cls}`}>
+              {line || ' '}
+            </div>
+          );
+        })}
+      </pre>
+    </div>
+  );
+}
+
+export default function ChangesCard({ files, mode, onUndo, undoing, undone, costUsd, costEstimated }: Props) {
+  const { t, fmtNum, fmtUsd } = useLang();
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [diffFiles, setDiffFiles] = useState<DiffFile[] | null>(null);
+  const [checkpointSaved, setCheckpointSaved] = useState(false);
   if (files.length === 0) return null;
 
   const created = files.filter((f) => f.action === 'created').length;
   const modified = files.length - created;
 
+  const toggleDiff = async () => {
+    if (!diffOpen && diffFiles === null) {
+      try {
+        const res = await api.diff();
+        setDiffFiles(res.files);
+      } catch {
+        setDiffFiles([]);
+      }
+    }
+    setDiffOpen((v) => !v);
+  };
+
+  const saveCheckpoint = async () => {
+    try {
+      await api.createCheckpoint(new Date().toLocaleString());
+      setCheckpointSaved(true);
+    } catch {
+      /* non-fatal */
+    }
+  };
+
   return (
-    <section className="changes-card" aria-label="Changes from this turn">
+    <section className="changes-card" aria-label={t('changes.title')}>
       <div className="changes-visual" aria-hidden="true">
         {files.slice(0, 6).map((f, i) => (
           <span key={`${f.path}-${i}`} className="change-tile">
@@ -41,26 +104,31 @@ export default function ChangesCard({ files, mode, onUndo, undoing, undone }: Pr
 
       <div className="changes-summary">
         <span>
-          {files.length} file{files.length === 1 ? '' : 's'} changed
-          {created > 0 && <> · {created} new</>}
-          {modified > 0 && <> · {modified} edited</>}
+          {t('changes.filesChanged', { count: fmtNum(files.length), plural: files.length === 1 ? '' : 's' })}
+          {created > 0 && <> · {t('changes.new', { count: fmtNum(created) })}</>}
+          {modified > 0 && <> · {t('changes.edited', { count: fmtNum(modified) })}</>}
         </span>
+        {typeof costUsd === 'number' && (
+          <span className="changes-cost">
+            {t('cost.thisTurn')} {fmtUsd(costUsd)}{costEstimated ? ` ${t('cost.est')}` : ''}
+          </span>
+        )}
       </div>
 
-      {mode === 'preview' && (
-        <p className="preview-note">
-          Preview mode — add an API key in Settings to go live.
-        </p>
-      )}
+      {mode === 'preview' && <p className="preview-note">{t('mode.previewBadge')}</p>}
 
       <div className="changes-actions">
+        <button type="button" className="btn btn--ghost" onClick={onUndo} disabled={undoing || undone}>
+          {undone ? t('changes.undone') : undoing ? t('changes.undoing') : t('changes.undo')}
+        </button>
         <button
           type="button"
           className="btn btn--ghost"
-          onClick={onUndo}
-          disabled={undoing || undone}
+          onClick={() => void toggleDiff()}
+          aria-expanded={diffOpen}
         >
-          {undone ? 'Undone' : undoing ? 'Undoing…' : 'Undo'}
+          {t('changes.diff')}
+          <span className={`chevron ${diffOpen ? 'chevron--open' : ''}`}>⌄</span>
         </button>
         <button
           type="button"
@@ -68,10 +136,21 @@ export default function ChangesCard({ files, mode, onUndo, undoing, undone }: Pr
           onClick={() => setDetailsOpen((v) => !v)}
           aria-expanded={detailsOpen}
         >
-          Details
+          {t('changes.details')}
           <span className={`chevron ${detailsOpen ? 'chevron--open' : ''}`}>⌄</span>
         </button>
+        <button type="button" className="btn btn--ghost" onClick={() => void saveCheckpoint()} disabled={checkpointSaved}>
+          {checkpointSaved ? '✓' : t('changes.checkpoint')}
+        </button>
       </div>
+
+      {diffOpen && diffFiles && (
+        <div className="diff-view">
+          {diffFiles.map((f) => (
+            <DiffBlock key={f.path} file={f} />
+          ))}
+        </div>
+      )}
 
       {detailsOpen && (
         <ul className="changes-details">
@@ -80,7 +159,7 @@ export default function ChangesCard({ files, mode, onUndo, undoing, undone }: Pr
               <span
                 className={`change-dot ${f.action === 'created' ? 'change-dot--created' : 'change-dot--modified'}`}
               />
-              <code>{f.path}</code>
+              <code dir="ltr">{f.path}</code>
               <span className="changes-details-action">{f.action}</span>
             </li>
           ))}
