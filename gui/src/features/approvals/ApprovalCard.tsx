@@ -1,5 +1,5 @@
-import type { ApprovalDetail } from '../lib/api';
-import { useLang } from '../lib/i18n';
+import type { ApprovalDetail } from '../../lib/api';
+import { useLang } from '../../lib/i18n';
 
 interface Props {
   kind: 'command' | 'write_outside';

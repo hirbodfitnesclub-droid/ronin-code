@@ -1,5 +1,5 @@
-import type { PlanStep } from '../lib/api';
-import { useLang } from '../lib/i18n';
+import type { PlanStep } from '../../lib/api';
+import { useLang } from '../../lib/i18n';
 
 interface Props {
   task: string;

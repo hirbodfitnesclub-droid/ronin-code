@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { api, type MaturedIdea, type Mode } from '../lib/api';
-import { useLang } from '../lib/i18n';
+import { api, type MaturedIdea, type Mode } from '../../lib/api';
+import { useLang } from '../../lib/i18n';
 
 interface Props {
   open: boolean;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { api, type Provider, type Status } from '../lib/api';
-import { useLang, type Lang } from '../lib/i18n';
+import { api, type Provider, type Status } from '../../lib/api';
+import { useLang, type Lang } from '../../lib/i18n';
 
 interface Props {
   open: boolean;

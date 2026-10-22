@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { api, type ChangedFile, type DiffFile, type Mode } from '../lib/api';
-import { useLang } from '../lib/i18n';
-import { parseDiffLines } from '../lib/diff';
+import { api, type ChangedFile, type DiffFile, type Mode } from '../../lib/api';
+import { useLang } from '../../lib/i18n';
+import { parseDiffLines } from '../../lib/diff';
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);

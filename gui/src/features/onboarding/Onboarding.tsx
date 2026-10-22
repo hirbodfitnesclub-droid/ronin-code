@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { api, type Provider, type Status } from '../lib/api';
-import { useLang, type Lang } from '../lib/i18n';
-import Logo from './Logo';
+import { api, type Provider, type Status } from '../../lib/api';
+import { useLang, type Lang } from '../../lib/i18n';
+import Logo from '../../components/ui/Logo';
 
 interface Props {
   providers: Provider[];
