@@ -10,7 +10,8 @@
     "serve": "npm run build && npm run start",
     "start": "npm --prefix host run start",
     "test": "npm --prefix gui test && npm --prefix host run test:unit && node host/test/e2e.mjs && npm --prefix server test",
-    "typecheck": "npm --prefix gui run typecheck"
+    "typecheck": "npm --prefix gui run typecheck",
+    "lint": "npm --prefix gui run lint"
   },
   "version": "0.1.0"
 }

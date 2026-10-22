@@ -1,0 +1,5 @@
+# CSS keeps its hand-tuned compact layout (layered partials under src/styles);
+# Prettier governs code files. Build output and lockfiles are not formatted.
+dist
+package-lock.json
+src/styles
