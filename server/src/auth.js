@@ -1,16 +1,30 @@
 import crypto from 'node:crypto';
-import { tx } from './db.js';
 import { hitRateLimit } from './ratelimit.js';
-import { hmacHex, sha256Hex, timingSafeEqualStr, randomToken, minutes, days, badRequest, unauthorized, forbidden, tooMany } from './util.js';
+import { sha256Hex, minutes, days, badRequest, unauthorized, forbidden, tooMany, HttpError, ms } from './util.js';
+import { log } from './log.js';
 
 /**
- * Phone + OTP auth (Ronin's approved design — see README "Deviation from Liro"):
- *  - OTP: 6 digits, HMAC-SHA256 hashed at rest, 5-min expiry, max 5 attempts,
- *    strict send rate limits (anti SMS-pumping).
- *  - Sessions: 15-min opaque access token + 30-day refresh token WITH rotation
- *    and reuse detection — reusing a rotated refresh token kills the whole family.
+ * Phone + OTP auth on Supabase Auth (GoTrue) — Ronin's approved design,
+ * re-based in the Supabase migration:
+ *
+ *  - Identity, OTP generation/verification and JWT sessions live in Supabase
+ *    Auth. OTPs are delivered by OUR Send SMS Hook (POST /hooks/send-sms),
+ *    which sends them through Kavenegar — Kavenegar is not a built-in
+ *    Supabase SMS provider.
+ *  - GoTrue alone does NOT enforce two product rules, so this layer adds:
+ *      · OTP brute-force lockout: max 5 wrong attempts, then the code is
+ *        dead (public.otp_guards) — GoTrue tolerates unlimited tries.
+ *      · Refresh-token rotation with REUSE DETECTION at our API boundary:
+ *        every refresh token we hand out is registered by SHA-256 hash
+ *        (public.device_refresh_tokens). Presenting a rotated-away token
+ *        revokes the whole device session — GoTrue tolerates reuse inside
+ *        its grace window, our invariant cannot.
  *  - Devices: max N concurrent devices (default 2); a login beyond the cap
- *    revokes the oldest device. Remote logout per device or for all devices.
+ *    revokes the oldest device. The device registry is AUTHORITATIVE:
+ *    authenticate() and the daily account-status check consult it on every
+ *    call, so revocation/suspension bite immediately, not at token expiry.
+ *  - Access tokens: 15 min (Auth JWT_EXP), verified locally by HS256 when
+ *    SUPABASE_JWT_SECRET is configured, else via the Auth /user endpoint.
  */
 
 export const OTP_TTL_MS = minutes(5);
@@ -18,156 +32,296 @@ export const OTP_MAX_ATTEMPTS = 5;
 export const ACCESS_TTL_MS = minutes(15);
 export const REFRESH_TTL_MS = days(30);
 
-export function requestOtp(db, cfg, sms, { phone, purpose = 'login', ip = '' }) {
-  // Send rate limits: 60s cooldown, 5/day per phone, 20/day per IP (Liro-grade, tightened per security review).
-  if (!hitRateLimit(db, `otp:min:${phone}`, 1, minutes(1))) throw tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.');
-  if (!hitRateLimit(db, `otp:day:${phone}`, 5, days(1))) throw tooMany('otp_daily_limit', 'Daily code limit reached for this number.');
-  if (ip && !hitRateLimit(db, `otp:ip:${ip}`, 20, days(1))) throw tooMany('otp_ip_limit', 'Too many code requests from this network.');
-
-  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
-  const codeHash = hmacHex(cfg.authSecret, `${phone}:${purpose}:${code}`);
-  tx(db, () => {
-    db.prepare("UPDATE otp_codes SET consumed = 1 WHERE phone = ? AND purpose = ? AND consumed = 0").run(phone, purpose);
-    db.prepare('INSERT INTO otp_codes (phone, purpose, code_hash, expires_at, created_at) VALUES (?,?,?,?,?)')
-      .run(phone, purpose, codeHash, Date.now() + OTP_TTL_MS, Date.now());
-  });
-  return sms.sendOtp(phone, code).then(() => ({ sent: true }));
+// ── phone formats ───────────────────────────────────────────────────────────
+export const toE164 = (localPhone) => `+98${String(localPhone).slice(1)}`;
+export function toLocalPhone(raw) {
+  const s = String(raw ?? '').replace(/^\+/, '');
+  return s.startsWith('98') && s.length === 12 ? `0${s.slice(2)}` : s;
 }
 
-export function verifyOtp(db, cfg, { phone, code, purpose = 'login' }) {
-  const row = db.prepare(
-    'SELECT * FROM otp_codes WHERE phone = ? AND purpose = ? AND consumed = 0 ORDER BY id DESC LIMIT 1'
-  ).get(phone, purpose);
-  if (!row) throw badRequest('otp_not_found', 'No active code for this number. Request a new one.');
-  if (row.expires_at <= Date.now()) {
-    db.prepare('UPDATE otp_codes SET consumed = 1 WHERE id = ?').run(row.id);
+// ── Supabase Auth (GoTrue) client ───────────────────────────────────────────
+async function gotrue(cfg, path, { method = 'GET', token = null, body = null } = {}) {
+  if (!cfg.supabaseAuthUrl) throw new HttpError(503, 'auth_not_configured', 'Auth server is not configured.');
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.supabaseAnonKey) headers.apikey = cfg.supabaseAnonKey;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res;
+  try {
+    res = await fetch(`${cfg.supabaseAuthUrl}${path}`, {
+      method, headers, body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new HttpError(502, 'auth_unavailable', 'Auth server unreachable.');
+  }
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* non-JSON error body */ }
+  return { status: res.status, json };
+}
+
+function decodeJwtPayload(token) {
+  try { return JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')); }
+  catch { return null; }
+}
+
+function verifyHs256(token, secret) {
+  const parts = String(token).split('.');
+  if (parts.length !== 3) return null;
+  const expected = crypto.createHmac('sha256', secret).update(`${parts[0]}.${parts[1]}`).digest('base64url');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(parts[2]);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  return decodeJwtPayload(token);
+}
+
+/** Best-effort hard kill of a GoTrue session (refresh tokens + session row).
+ *  Our registry remains authoritative even if the Auth schema ever drifts. */
+async function killGotrueSession(db, sessionId) {
+  if (!sessionId) return;
+  try {
+    await db.query('DELETE FROM auth.refresh_tokens WHERE session_id = $1', [sessionId]);
+    await db.query('DELETE FROM auth.sessions WHERE id = $1', [sessionId]);
+  } catch (e) {
+    log.warn('gotrue_session_kill_failed', { error: e.message });
+  }
+}
+
+// ── OTP: request ────────────────────────────────────────────────────────────
+export async function requestOtp(db, cfg, { phone, ip = '' }) {
+  // Send rate limits: 60s cooldown, 5/day per phone, 20/day per IP (anti SMS-pumping).
+  if (!(await hitRateLimit(db, `otp:min:${phone}`, 1, minutes(1)))) throw tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.');
+  if (!(await hitRateLimit(db, `otp:day:${phone}`, 5, days(1)))) throw tooMany('otp_daily_limit', 'Daily code limit reached for this number.');
+  if (ip && !(await hitRateLimit(db, `otp:ip:${ip}`, 20, days(1)))) throw tooMany('otp_ip_limit', 'Too many code requests from this network.');
+
+  const { status, json } = await gotrue(cfg, '/otp', {
+    method: 'POST',
+    body: { phone: toE164(phone), create_user: true, channel: 'sms' },
+  });
+  if (status === 429) throw tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.');
+  if (status < 200 || status >= 300) {
+    log.error('gotrue_otp_failed', { status, error: json?.error_code ?? json?.msg ?? 'unknown' });
+    throw new HttpError(502, 'otp_send_failed', 'Could not send the code. Try again.');
+  }
+  // Fresh code → fresh brute-force budget.
+  await db.query(
+    `INSERT INTO public.otp_guards (phone, fail_count, issued_at, locked, updated_at)
+     VALUES ($1, 0, now(), false, now())
+     ON CONFLICT (phone) DO UPDATE SET fail_count = 0, issued_at = now(), locked = false, updated_at = now()`,
+    [phone]);
+  return { sent: true };
+}
+
+// ── OTP: verify (returns the GoTrue session) ────────────────────────────────
+async function verifyOtpWithGotrue(db, cfg, { phone, code }) {
+  const guard = await db.one('SELECT * FROM public.otp_guards WHERE phone = $1', [phone]);
+  if (!guard || guard.locked) throw badRequest('otp_not_found', 'No active code for this number. Request a new one.');
+  const nowMs = Date.now();
+  if (guard.issued_at && nowMs - new Date(guard.issued_at).getTime() > cfg.otpTtlSeconds * 1000) {
+    await db.query('UPDATE public.otp_guards SET locked = true, updated_at = now() WHERE phone = $1', [phone]);
     throw badRequest('otp_expired', 'This code has expired. Request a new one.');
   }
-  if (row.attempts >= OTP_MAX_ATTEMPTS) throw tooMany('otp_locked', 'Too many wrong attempts. Request a new code.');
-  const candidate = hmacHex(cfg.authSecret, `${phone}:${purpose}:${String(code).trim()}`);
-  if (!timingSafeEqualStr(candidate, row.code_hash)) {
-    db.prepare('UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?').run(row.id);
-    const left = OTP_MAX_ATTEMPTS - (row.attempts + 1);
-    if (left <= 0) db.prepare('UPDATE otp_codes SET consumed = 1 WHERE id = ?').run(row.id);
-    throw badRequest('otp_wrong', `Wrong code. ${Math.max(left, 0)} attempts left.`);
-  }
-  db.prepare('UPDATE otp_codes SET consumed = 1 WHERE id = ?').run(row.id);
-  return true;
-}
-
-function issueTokens(db, userId, familyId) {
-  const accessToken = randomToken(32);
-  const refreshToken = randomToken(32);
-  db.prepare('INSERT INTO access_tokens (token_hash, user_id, family_id, expires_at, created_at) VALUES (?,?,?,?,?)')
-    .run(sha256Hex(accessToken), userId, familyId, Date.now() + ACCESS_TTL_MS, Date.now());
-  const info = db.prepare('INSERT INTO refresh_tokens (family_id, token_hash, expires_at, created_at) VALUES (?,?,?,?)')
-    .run(familyId, sha256Hex(refreshToken), Date.now() + REFRESH_TTL_MS, Date.now());
-  return { accessToken, refreshToken, refreshId: Number(info.lastInsertRowid) };
-}
-
-/** Verify OTP and open a session on a (possibly new) device. */
-export function loginWithOtp(db, cfg, { phone, code, deviceName = null, name = null }) {
-  verifyOtp(db, cfg, { phone, code, purpose: 'login' });
-  return tx(db, () => {
-    let user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
-    if (!user) {
-      const info = db.prepare('INSERT INTO users (phone, name, created_at) VALUES (?,?,?)').run(phone, name, Date.now());
-      user = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(info.lastInsertRowid));
-    } else if (name && !user.name) {
-      db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, user.id);
-      user.name = name;
-    }
-    if (!user.is_active) throw forbidden('account_disabled', 'This account is disabled.');
-
-    // Device cap: revoke oldest active devices beyond (maxDevices - 1) to make room.
-    const activeDevices = db.prepare(`
-      SELECT d.id FROM devices d JOIN token_families f ON f.device_id = d.id
-      WHERE d.user_id = ? AND d.revoked_at IS NULL AND f.revoked_at IS NULL
-      GROUP BY d.id ORDER BY MAX(f.created_at) ASC`).all(user.id);
-    const toRevoke = activeDevices.slice(0, Math.max(0, activeDevices.length - (cfg.maxDevices - 1)));
-    for (const d of toRevoke) revokeDevice(db, user.id, d.id, 'device_cap');
-
-    const dev = db.prepare('INSERT INTO devices (user_id, name, created_at, last_seen_at) VALUES (?,?,?,?)')
-      .run(user.id, deviceName, Date.now(), Date.now());
-    const deviceId = Number(dev.lastInsertRowid);
-    const fam = db.prepare('INSERT INTO token_families (user_id, device_id, created_at) VALUES (?,?,?)')
-      .run(user.id, deviceId, Date.now());
-    const familyId = Number(fam.lastInsertRowid);
-    db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(Date.now(), user.id);
-    const tokens = issueTokens(db, user.id, familyId);
-    return { user: publicUser(user), deviceId, ...tokens };
+  const { status, json } = await gotrue(cfg, '/verify', {
+    method: 'POST',
+    body: { phone: toE164(phone), token: String(code).trim(), type: 'sms' },
   });
+  if (status >= 200 && status < 300 && json?.access_token) {
+    await db.query('DELETE FROM public.otp_guards WHERE phone = $1', [phone]);
+    return json;
+  }
+  const fails = guard.fail_count + 1;
+  await db.query(
+    'UPDATE public.otp_guards SET fail_count = $2, locked = $3, updated_at = now() WHERE phone = $1',
+    [phone, fails, fails >= OTP_MAX_ATTEMPTS]);
+  const left = OTP_MAX_ATTEMPTS - fails;
+  throw badRequest('otp_wrong', `Wrong code. ${Math.max(left, 0)} attempts left.`);
+}
+
+// ── Login: verify OTP, enforce device cap, register the session ─────────────
+export async function loginWithOtp(db, cfg, { phone, code, deviceName = null, name = null }) {
+  const session = await verifyOtpWithGotrue(db, cfg, { phone, code });
+  const authUserId = session.user?.id;
+  const payload = decodeJwtPayload(session.access_token);
+  const sessionId = payload?.session_id ?? null;
+
+  let user = await db.one('SELECT * FROM public.users WHERE id = $1', [authUserId]);
+  if (!user) {
+    // The auth.users trigger normally creates the profile at OTP-request
+    // time; this is the belt-and-braces path if it ever lags.
+    await db.query(
+      'INSERT INTO public.users (id, phone, name) VALUES ($1,$2,$3) ON CONFLICT (id) DO NOTHING',
+      [authUserId, phone, name]);
+    user = await db.one('SELECT * FROM public.users WHERE id = $1', [authUserId]);
+  } else if (name && !user.name) {
+    await db.query('UPDATE public.users SET name = $2 WHERE id = $1', [user.id, name]);
+    user.name = name;
+  }
+  if (!user.is_active) {
+    await killGotrueSession(db, sessionId);
+    throw forbidden('account_disabled', 'This account is disabled.');
+  }
+
+  // Device cap: revoke oldest active devices beyond (maxDevices - 1) to make room.
+  const active = await db.many(
+    'SELECT id FROM public.devices WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at ASC',
+    [user.id]);
+  const excess = active.length - (cfg.maxDevices - 1);
+  for (const d of active.slice(0, Math.max(0, excess))) {
+    await revokeDeviceById(db, d.id);
+  }
+
+  const dev = await db.one(
+    'INSERT INTO public.devices (user_id, auth_session_id, name, last_seen_at) VALUES ($1,$2,$3,now()) RETURNING id',
+    [user.id, sessionId, deviceName]);
+  await db.query(
+    'INSERT INTO public.device_refresh_tokens (device_id, token_hash) VALUES ($1,$2)',
+    [dev.id, sha256Hex(session.refresh_token)]);
+  await db.query('UPDATE public.users SET last_login_at = now() WHERE id = $1', [user.id]);
+  return {
+    user: publicUser(user), deviceId: dev.id,
+    accessToken: session.access_token, refreshToken: session.refresh_token,
+  };
 }
 
 export function publicUser(u) {
-  return { id: u.id, phone: u.phone, name: u.name, isActive: Boolean(u.is_active), createdAt: u.created_at };
+  return { id: u.id, phone: u.phone, name: u.name, isActive: Boolean(u.is_active), createdAt: ms(u.created_at) };
 }
 
-/** Resolve an access token → user (user API only; admin tokens are a separate table/domain). */
-export function authenticate(db, accessToken) {
+// ── Authenticate an access token (user API only) ────────────────────────────
+export async function authenticate(db, cfg, accessToken) {
   if (!accessToken) throw unauthorized();
-  const row = db.prepare('SELECT * FROM access_tokens WHERE token_hash = ?').get(sha256Hex(accessToken));
-  if (!row || row.expires_at <= Date.now()) throw unauthorized('token_expired', 'Access token expired.');
-  const fam = db.prepare('SELECT * FROM token_families WHERE id = ?').get(row.family_id);
-  if (!fam || fam.revoked_at) throw unauthorized('session_revoked', 'Session was revoked.');
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+  let payload = null;
+  let userId = null;
+  if (cfg.supabaseJwtSecret) {
+    payload = verifyHs256(accessToken, cfg.supabaseJwtSecret);
+    if (!payload) throw unauthorized('invalid_token', 'Invalid access token.');
+  } else {
+    const { status, json } = await gotrue(cfg, '/user', { token: accessToken });
+    if (status !== 200 || !json?.id) throw unauthorized('token_expired', 'Access token expired or invalid.');
+    userId = json.id;
+    payload = decodeJwtPayload(accessToken);
+  }
+  if (payload?.exp && payload.exp * 1000 <= Date.now()) {
+    throw unauthorized('token_expired', 'Access token expired.');
+  }
+  userId = userId ?? payload?.sub;
+  const sessionId = payload?.session_id;
+  if (!userId || !sessionId) throw unauthorized('invalid_token', 'Invalid access token.');
+
+  // The device registry is authoritative: a revoked device/session fails
+  // here even if the JWT itself has not expired yet.
+  const device = await db.one('SELECT * FROM public.devices WHERE auth_session_id = $1', [sessionId]);
+  if (!device || device.user_id !== userId || device.revoked_at) {
+    throw unauthorized('session_revoked', 'Session was revoked.');
+  }
+  const user = await db.one('SELECT * FROM public.users WHERE id = $1', [userId]);
   if (!user || !user.is_active) throw unauthorized('account_disabled', 'Account disabled or gone.');
-  return { user, familyId: row.family_id };
+  return { user, deviceId: device.id, sessionId, familyId: sessionId };
 }
 
-/** Rotate a refresh token. Reuse of an already-rotated token kills the family. */
-export function refreshSession(db, refreshToken) {
+// ── Refresh: rotation + reuse detection at our boundary ─────────────────────
+export async function refreshSession(db, cfg, refreshToken) {
   if (!refreshToken) throw unauthorized();
   const hash = sha256Hex(refreshToken);
-  const outcome = tx(db, () => {
-    const row = db.prepare('SELECT * FROM refresh_tokens WHERE token_hash = ?').get(hash);
-    if (!row) throw unauthorized('invalid_refresh', 'Unknown refresh token.');
-    const fam = db.prepare('SELECT * FROM token_families WHERE id = ?').get(row.family_id);
-    if (!fam || fam.revoked_at) throw unauthorized('session_revoked', 'Session was revoked.');
-    if (row.replaced_by_id || row.used_at) {
-      // REUSE DETECTED: a rotated-away token was presented again → treat as theft.
-      // The revocation must COMMIT — so return a marker and throw after the tx,
-      // never throw here (tx would roll the revocation back).
-      revokeFamily(db, fam.id, 'refresh_reuse_detected');
-      return { reuse: true };
-    }
-    if (row.expires_at <= Date.now()) throw unauthorized('refresh_expired', 'Refresh token expired.');
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(fam.user_id);
-    if (!user || !user.is_active) throw unauthorized('account_disabled', 'Account disabled or gone.');
-    const tokens = issueTokens(db, user.id, fam.id);
-    db.prepare('UPDATE refresh_tokens SET used_at = ?, replaced_by_id = ? WHERE id = ?').run(Date.now(), tokens.refreshId, row.id);
-    db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(Date.now(), fam.device_id);
-    return { user: publicUser(user), accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
-  });
-  if (outcome?.reuse) {
-    throw unauthorized('refresh_reuse', 'Refresh token reuse detected. The whole session family was revoked; log in again.');
+  const reg = await db.one(
+    `SELECT t.state, t.device_id, d.revoked_at AS device_revoked,
+            d.user_id, d.auth_session_id
+     FROM public.device_refresh_tokens t
+     JOIN public.devices d ON d.id = t.device_id
+     WHERE t.token_hash = $1`,
+    [hash]);
+  if (!reg) throw unauthorized('invalid_refresh', 'Unknown refresh token.');
+  if (reg.state === 'rotated') {
+    // REUSE DETECTED: a rotated-away token was presented again → treat as theft.
+    // The revocation is committed by revokeDeviceById BEFORE we throw.
+    await revokeDeviceById(db, reg.device_id);
+    throw unauthorized('refresh_reuse', 'Refresh token reuse detected. The whole session was revoked; log in again.');
   }
-  return outcome;
+  if (reg.state === 'revoked' || reg.device_revoked) {
+    throw unauthorized('session_revoked', 'Session was revoked.');
+  }
+  const user = await db.one('SELECT * FROM public.users WHERE id = $1', [reg.user_id]);
+  if (!user || !user.is_active) throw unauthorized('account_disabled', 'Account disabled or gone.');
+
+  const { status, json } = await gotrue(cfg, '/token?grant_type=refresh_token', {
+    method: 'POST', body: { refresh_token: refreshToken },
+  });
+  if (status < 200 || status >= 300 || !json?.access_token) {
+    await db.query(
+      "UPDATE public.device_refresh_tokens SET state = 'revoked' WHERE token_hash = $1", [hash]);
+    const msg = String(json?.msg ?? json?.error_code ?? '');
+    if (/expired/i.test(msg)) throw unauthorized('refresh_expired', 'Refresh token expired.');
+    throw unauthorized('invalid_refresh', 'Refresh token rejected.');
+  }
+
+  await db.query(
+    "UPDATE public.device_refresh_tokens SET state = 'rotated', rotated_at = now() WHERE token_hash = $1", [hash]);
+  await db.query(
+    'INSERT INTO public.device_refresh_tokens (device_id, token_hash) VALUES ($1,$2)',
+    [reg.device_id, sha256Hex(json.refresh_token)]);
+  const newSessionId = decodeJwtPayload(json.access_token)?.session_id;
+  await db.query(
+    'UPDATE public.devices SET last_seen_at = now(), auth_session_id = COALESCE($2, auth_session_id) WHERE id = $1',
+    [reg.device_id, newSessionId ?? null]);
+  return {
+    user: publicUser(user), deviceId: reg.device_id,
+    accessToken: json.access_token, refreshToken: json.refresh_token,
+  };
 }
 
-export function revokeFamily(db, familyId, reason = 'logout') {
-  db.prepare('UPDATE token_families SET revoked_at = ?, revoke_reason = ? WHERE id = ? AND revoked_at IS NULL')
-    .run(Date.now(), reason, familyId);
-  db.prepare('DELETE FROM access_tokens WHERE family_id = ?').run(familyId);
+// ── Revocation / devices ────────────────────────────────────────────────────
+export async function revokeDeviceById(db, deviceId) {
+  const dev = await db.one('SELECT auth_session_id FROM public.devices WHERE id = $1', [deviceId]);
+  await db.query(
+    'UPDATE public.devices SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [deviceId]);
+  await db.query(
+    "UPDATE public.device_refresh_tokens SET state = 'revoked' WHERE device_id = $1 AND state <> 'revoked'",
+    [deviceId]);
+  await killGotrueSession(db, dev?.auth_session_id);
 }
 
-export function revokeDevice(db, userId, deviceId, reason = 'remote_logout') {
-  const fams = db.prepare('SELECT id FROM token_families WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL').all(userId, deviceId);
-  for (const f of fams) revokeFamily(db, f.id, reason);
-  db.prepare('UPDATE devices SET revoked_at = ? WHERE id = ? AND user_id = ?').run(Date.now(), deviceId, userId);
+export async function revokeDevice(db, userId, deviceId) {
+  const own = await db.one('SELECT id FROM public.devices WHERE id = $1 AND user_id = $2', [deviceId, userId]);
+  if (own) await revokeDeviceById(db, deviceId);
 }
 
-export function listDevices(db, userId) {
-  return db.prepare(`
-    SELECT d.id, d.name, d.created_at AS createdAt, d.last_seen_at AS lastSeenAt,
-           MAX(CASE WHEN f.revoked_at IS NULL THEN 1 ELSE 0 END) AS active
-    FROM devices d LEFT JOIN token_families f ON f.device_id = d.id
-    WHERE d.user_id = ? GROUP BY d.id ORDER BY d.id DESC`).all(userId)
-    .map((d) => ({ ...d, active: Boolean(d.active) }));
+export async function revokeSession(db, sessionId) {
+  const dev = await db.one('SELECT id FROM public.devices WHERE auth_session_id = $1', [sessionId]);
+  if (dev) await revokeDeviceById(db, dev.id);
 }
 
-export function logoutAll(db, userId) {
-  const fams = db.prepare('SELECT id FROM token_families WHERE user_id = ? AND revoked_at IS NULL').all(userId);
-  for (const f of fams) revokeFamily(db, f.id, 'logout_all');
-  db.prepare('UPDATE devices SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(Date.now(), userId);
+export async function logoutAll(db, userId) {
+  const devices = await db.many(
+    'SELECT id FROM public.devices WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+  for (const d of devices) await revokeDeviceById(db, d.id);
+}
+
+export async function listDevices(db, userId) {
+  const rows = await db.many(
+    'SELECT id, name, created_at, last_seen_at, revoked_at FROM public.devices WHERE user_id = $1 ORDER BY created_at DESC',
+    [userId]);
+  return rows.map((d) => ({
+    id: d.id, name: d.name,
+    createdAt: ms(d.created_at), lastSeenAt: ms(d.last_seen_at),
+    active: !d.revoked_at,
+  }));
+}
+
+// ── Daily revalidation (account status) ─────────────────────────────────────
+/** The single lightweight status the desktop app polls on launch + daily. */
+export async function accountStatus(db, userId, deviceId) {
+  const row = await db.one('SELECT public.account_status($1,$2) AS s', [userId, deviceId ?? null]);
+  const s = row.s;
+  if (!s.ok) throw unauthorized('account_disabled', 'Account disabled or gone.');
+  return {
+    serverTime: ms(s.serverTime),
+    status: s.status,
+    isActive: Boolean(s.isActive),
+    balanceTokens: Number(s.balanceTokens),
+    spendableTokens: Number(s.spendableTokens),
+    lots: (s.lots ?? []).map((l) => ({
+      id: Number(l.id), tokensLeft: Number(l.tokensLeft), expiresAt: ms(l.expiresAt),
+    })),
+    deviceAuthorized: Boolean(s.deviceAuthorized),
+    activeDevices: Number(s.activeDevices),
+  };
 }

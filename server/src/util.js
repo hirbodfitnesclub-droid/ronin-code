@@ -4,6 +4,10 @@ export const now = () => Date.now();
 export const minutes = (n) => n * 60_000;
 export const days = (n) => n * 86_400_000;
 
+/** pg returns timestamptz as Date (rows) or ISO string (jsonb) and int8 as string — normalize at the API edge. */
+export const ms = (v) => (v === null || v === undefined ? null : v instanceof Date ? v.getTime() : typeof v === 'string' ? Date.parse(v) : Number(v));
+export const num = (v) => (v === null || v === undefined ? null : Number(v));
+
 export function randomToken(bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64url');
 }

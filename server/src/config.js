@@ -30,7 +30,27 @@ export function loadConfig(overrides = {}) {
     port: int(env.PORT, 7443),
     adminPort: int(env.ADMIN_PORT, 7444),
     cookieSecure: env.COOKIE_SECURE === '1' || env.COOKIE_SECURE === 'true',
-    dbPath: env.DB_PATH || path.join(SERVER_DIR, 'data', 'ronin.db'),
+
+    // ── Supabase (migration: data + accounts live in Postgres/Auth) ──────
+    // Direct Postgres connection for our servers. Production: the project's
+    // connection string (role: postgres). Local dev stack: the local
+    // service_role login created by supabase/local/00_prereqs.sql.
+    databaseUrl: env.DATABASE_URL || '',
+    // Base URL of the Supabase Auth API (GoTrue).
+    // Cloud: https://<ref>.supabase.co/auth/v1 · Local stack: http://127.0.0.1:<port>
+    supabaseAuthUrl: (env.SUPABASE_AUTH_URL || '').replace(/\/$/, ''),
+    // Anon key — sent as the `apikey` header the Cloud gateway requires.
+    supabaseAnonKey: env.SUPABASE_ANON_KEY || '',
+    // HS256 secret GoTrue signs JWTs with (self-hosted). When set, access
+    // tokens are verified locally; otherwise via the Auth /user endpoint.
+    supabaseJwtSecret: env.SUPABASE_JWT_SECRET || '',
+    // Send SMS Hook: GoTrue signs its calls with this Standard-Webhooks
+    // secret; POST /hooks/send-sms verifies before delivering via Kavenegar.
+    authHookSecret: env.SUPABASE_AUTH_HOOK_SEND_SMS_SECRET || '',
+    // OTP lifetime the Auth server is configured with, in seconds (product
+    // rule: 300 = 5 min). Our guard layer mirrors expiry from this value.
+    otpTtlSeconds: int(env.OTP_TTL_SECONDS, 300),
+
     authSecret: env.AUTH_SECRET || '',
     adminPhones: list(env.ADMIN_PHONES),
     smsProvider: (env.SMS_PROVIDER || 'console').toLowerCase(),
@@ -59,7 +79,7 @@ export function loadConfig(overrides = {}) {
   if (!cfg.authSecret) {
     cfg.authSecret = crypto.randomBytes(32).toString('hex');
     cfg.authSecretEphemeral = true;
-    log.warn('auth_secret_ephemeral', { note: 'AUTH_SECRET not set — generated an ephemeral one (OTP codes will not survive a restart)' });
+    log.warn('auth_secret_ephemeral', { note: 'AUTH_SECRET not set — generated an ephemeral one (admin OTP codes will not survive a restart)' });
   }
   return cfg;
 }

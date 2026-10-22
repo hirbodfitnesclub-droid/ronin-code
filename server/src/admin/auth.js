@@ -1,9 +1,10 @@
 import { sha256Hex, randomToken, forbidden, unauthorized, isAdminPhone } from '../util.js';
-import * as auth from '../auth.js';
+import * as otp from './otp.js';
 
 /**
  * Admin authentication — a SEPARATE domain from user auth:
- *  - OTP login restricted to phones in ADMIN_PHONES (Liro owner semantics).
+ *  - OTP login restricted to phones in ADMIN_PHONES (Liro owner semantics),
+ *    codes issued/verified by the admin-domain OTP module (not Supabase Auth).
  *  - Sessions live in `admin_sessions`, transported by the `ronin_admin` cookie.
  *  - User access/refresh tokens are never accepted here, and admin session
  *    tokens are meaningless on the user API (different tables, different checks).
@@ -15,27 +16,30 @@ export const ADMIN_SESSION_TTL_MS = 12 * 3_600_000; // 12 hours
 
 export function requestAdminOtp(db, cfg, sms, { phone, ip = '' }) {
   if (!isAdminPhone(cfg, phone)) throw forbidden('not_an_admin', 'This phone number is not an admin.');
-  return auth.requestOtp(db, cfg, sms, { phone, purpose: 'admin_login', ip });
+  return otp.requestOtp(db, cfg, sms, { phone, ip });
 }
 
-export function loginAdminWithOtp(db, cfg, { phone, code }) {
+export async function loginAdminWithOtp(db, cfg, { phone, code }) {
   if (!isAdminPhone(cfg, phone)) throw forbidden('not_an_admin', 'This phone number is not an admin.');
-  auth.verifyOtp(db, cfg, { phone, code, purpose: 'admin_login' });
+  await otp.verifyOtp(db, cfg, { phone, code });
   const token = randomToken(32);
   const csrfToken = randomToken(24);
-  db.prepare('DELETE FROM admin_sessions WHERE phone = ?').run(phone); // one live admin session per admin phone
-  db.prepare('INSERT INTO admin_sessions (token_hash, phone, csrf_token, expires_at, created_at) VALUES (?,?,?,?,?)')
-    .run(sha256Hex(token), phone, csrfToken, Date.now() + ADMIN_SESSION_TTL_MS, Date.now());
+  await db.query('DELETE FROM public.admin_sessions WHERE phone = $1', [phone]); // one live admin session per admin phone
+  await db.query(
+    "INSERT INTO public.admin_sessions (token_hash, phone, csrf_token, expires_at) VALUES ($1,$2,$3, now() + ($4::bigint * interval '1 millisecond'))",
+    [sha256Hex(token), phone, csrfToken, ADMIN_SESSION_TTL_MS]);
   return { token, csrfToken, phone };
 }
 
-export function authenticateAdmin(db, req) {
+export async function authenticateAdmin(db, req) {
   const cookie = (req.headers.cookie || '').split(';').map((s) => s.trim())
     .find((s) => s.startsWith(`${ADMIN_COOKIE}=`));
   if (!cookie) throw unauthorized('admin_login_required', 'Admin login required.');
   const token = decodeURIComponent(cookie.slice(ADMIN_COOKIE.length + 1));
-  const row = db.prepare('SELECT * FROM admin_sessions WHERE token_hash = ?').get(sha256Hex(token));
-  if (!row || row.expires_at <= Date.now()) throw unauthorized('admin_session_expired', 'Admin session expired.');
+  const row = await db.one('SELECT * FROM public.admin_sessions WHERE token_hash = $1', [sha256Hex(token)]);
+  if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
+    throw unauthorized('admin_session_expired', 'Admin session expired.');
+  }
   return row; // { phone, csrf_token, ... }
 }
 
@@ -44,8 +48,8 @@ export function requireCsrf(session, req) {
   if (!presented || presented !== session.csrf_token) throw forbidden('csrf_failed', 'CSRF token missing or invalid.');
 }
 
-export function logoutAdmin(db, token) {
-  if (token) db.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').run(sha256Hex(token));
+export async function logoutAdmin(db, token) {
+  if (token) await db.query('DELETE FROM public.admin_sessions WHERE token_hash = $1', [sha256Hex(token)]);
 }
 
 export function adminCookieHeader(token, secure = false) {
