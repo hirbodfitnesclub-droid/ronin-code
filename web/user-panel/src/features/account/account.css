@@ -1,0 +1,33 @@
+/* Account — profile card, settings rows, sign out. */
+.account-profile { display: flex; align-items: center; gap: 16px; }
+.account-avatar {
+  width: 56px; height: 56px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-bright); border: 1px solid var(--accent-glow);
+  font-size: 22px; font-weight: 700;
+}
+.account-name { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.account-sub { color: var(--text-dim); font-size: 13px; margin-top: 3px; }
+.account-rows { display: flex; flex-direction: column; }
+.account-row {
+  display: flex; align-items: center; gap: 12px; padding: 14px 0;
+  border-bottom: 1px solid var(--border); width: 100%; background: none; border-top: 0; border-inline: 0;
+  color: var(--text); text-align: start; font-size: 14.5px;
+}
+.account-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.account-row:first-child { padding-top: 2px; }
+.account-row-label { flex: 1; min-width: 0; }
+.account-row-hint { display: block; color: var(--text-faint); font-size: 12px; margin-top: 2px; }
+.account-row-value { color: var(--text-dim); flex: none; }
+.account-chevron { color: var(--text-faint); flex: none; }
+.account-segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 999px; overflow: hidden; flex: none; }
+.account-segmented button {
+  border: 0; background: var(--bg-raised); color: var(--text-dim); padding: 6px 16px; font-size: 13px; font-weight: 600;
+}
+.account-segmented button.is-active { background: var(--accent-soft); color: var(--accent-bright); }
+.btn-logout {
+  width: 100%; background: transparent; border: 1px solid var(--accent-glow); color: var(--accent-bright);
+  border-radius: 999px; padding: 11px 18px; font-size: 14px; font-weight: 650;
+}
+.btn-logout:hover { background: var(--accent-soft); }
+.account-center { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 28px 0; color: var(--text-dim); }
+.account-logout-wrap { margin-top: 16px; }

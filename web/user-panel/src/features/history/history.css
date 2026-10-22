@@ -1,0 +1,31 @@
+/* History — balance strip, filter chips, ledger rows. */
+.history-balance { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 18px; }
+.history-balance-item { display: flex; flex-direction: column; gap: 2px; }
+.history-balance-label { color: var(--text-dim); font-size: 12.5px; }
+.history-balance-value { font-size: 20px; font-weight: 700; }
+.history-filters { display: flex; gap: 8px; margin-bottom: 6px; }
+.history-filter {
+  border: 1px solid var(--border); background: var(--bg-raised); color: var(--text-dim);
+  border-radius: 999px; padding: 6px 16px; font-size: 13px; font-weight: 600;
+}
+.history-filter:hover { background: var(--bg-hover); color: var(--text); }
+.history-filter.is-active { color: var(--accent-bright); background: var(--accent-soft); border-color: var(--accent-glow); }
+.history-list { display: flex; flex-direction: column; }
+.history-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.history-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.history-row:first-child { padding-top: 8px; }
+.history-icon {
+  width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--bg-raised); border: 1px solid var(--border); color: var(--text-dim);
+}
+.history-row-main { flex: 1; min-width: 0; }
+.history-row-title { font-weight: 600; font-size: 14px; }
+.history-row-sub { color: var(--text-dim); font-size: 12.5px; margin-top: 2px; }
+.history-row-side { text-align: end; flex: none; }
+.history-delta { font-weight: 700; font-size: 14.5px; }
+.history-delta-pos { color: var(--green); }
+.history-delta-neg { color: var(--accent-bright); }
+.history-delta-zero { color: var(--text-dim); }
+.history-balance-after { color: var(--text-faint); font-size: 12px; margin-top: 2px; }
+.history-date { color: var(--text-faint); font-size: 12px; margin-top: 2px; }
+.history-center { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 28px 0; color: var(--text-dim); }

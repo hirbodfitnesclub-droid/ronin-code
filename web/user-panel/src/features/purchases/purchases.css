@@ -1,0 +1,24 @@
+/* Purchases — claim rows: table-like on desktop, stacked cards on mobile. */
+.purchases-list { display: flex; flex-direction: column; }
+.purchases-row { padding: 16px 0; border-bottom: 1px solid var(--border); }
+.purchases-row:first-child { padding-top: 2px; }
+.purchases-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.purchases-row-main { display: flex; align-items: flex-start; gap: 14px; }
+.purchases-row-info { flex: 1; min-width: 0; }
+.purchases-pack { font-weight: 650; font-size: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.purchases-meta { color: var(--text-dim); font-size: 13px; margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.purchases-price { font-weight: 650; white-space: nowrap; }
+.purchases-note { color: var(--text-dim); font-size: 12.5px; margin-top: 8px; }
+.purchases-reject {
+  margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--accent-soft); border: 1px solid var(--accent-glow);
+  color: var(--text); font-size: 13px;
+}
+.purchases-reject-label { color: var(--accent-bright); font-weight: 650; margin-inline-end: 6px; }
+.purchases-receipt { display: inline-flex; align-items: center; color: var(--text-faint); }
+.purchases-center { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 28px 0; color: var(--text-dim); }
+.purchases-cta { display: flex; justify-content: center; padding-bottom: 26px; }
+@media (max-width: 640px) {
+  .purchases-row-main { flex-direction: column; gap: 8px; }
+  .purchases-row { padding: 14px 0; }
+}
