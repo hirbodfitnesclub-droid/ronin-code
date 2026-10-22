@@ -1,0 +1,37 @@
+/* ---------------- panels (idea / publish / checkpoints) ---------------- */
+
+.modal--wide { width: min(560px, 100%); }
+.panel-sub { color: var(--text-dim); margin: 0 0 16px; line-height: 1.65; }
+.panel-textarea {
+  width: 100%; min-height: 74px; resize: vertical;
+  background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--text); font-family: inherit; font-size: 14.5px; padding: 12px 14px; outline: none;
+}
+.panel-textarea:focus { border-color: rgba(255, 255, 255, 0.22); box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.08); }
+.idea-cards { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
+.idea-card {
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 15px 17px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent);
+  animation: modalIn 0.3s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+.idea-card:nth-child(2) { animation-delay: 0.07s; }
+.idea-card:nth-child(3) { animation-delay: 0.14s; }
+.idea-card h3 { margin: 0 0 7px; font-size: 13px; font-weight: 650; color: var(--accent-bright); letter-spacing: 0.01em; }
+.idea-card p { margin: 0 0 6px; color: var(--text); line-height: 1.65; }
+.idea-card p.pain { color: var(--text-dim); }
+.idea-card ul, .idea-card ol { margin: 0; padding-inline-start: 19px; color: var(--text); line-height: 1.75; }
+.idea-card li span { color: var(--text-faint); }
+.publish-steps { margin: 0; padding-inline-start: 19px; color: var(--text-dim); line-height: 1.8; }
+.checkpoint-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.checkpoint-row:last-child { border-bottom: none; }
+.checkpoint-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.checkpoint-name { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.checkpoint-meta { color: var(--text-faint); font-size: 11.5px; }
+.checkpoint-save-row { display: flex; gap: 8px; margin-bottom: 14px; }
+.checkpoint-save-row input {
+  flex: 1; background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--text); font-family: inherit; font-size: 13.5px; padding: 9px 12px; outline: none;
+}

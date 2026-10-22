@@ -1,0 +1,46 @@
+/* ---------------- onboarding ---------------- */
+
+.onboarding {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(4, 5, 7, 0.78); backdrop-filter: blur(10px);
+  display: grid; place-items: center; padding: 20px;
+  animation: fadeIn 0.25s ease both;
+}
+.onboarding-card {
+  width: min(480px, 100%); border-radius: 24px; padding: 34px 34px 28px;
+  background: linear-gradient(180deg, #171a21, #101218);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 40px 100px -20px rgba(0, 0, 0, 0.9);
+  animation: modalIn 0.3s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+  max-height: calc(100dvh - 40px); overflow-y: auto;
+}
+.onboarding-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 24px; }
+.onboarding-dot { width: 22px; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.12); transition: background 0.2s; }
+.onboarding-dot--active { background: var(--accent-bright); }
+.onboarding-dot--done { background: rgba(255, 255, 255, 0.35); }
+.onboarding-step h1 { margin: 0 0 10px; font-size: 24px; font-weight: 680; letter-spacing: -0.02em; text-align: center; }
+.onboarding-logo { display: flex; justify-content: center; margin-bottom: 16px; }
+.onboarding-logo .logo svg { width: 46px; height: 46px; }
+.onboarding-sub { color: var(--text-dim); text-align: center; margin: 0 0 22px; line-height: 1.65; }
+.onboarding-lang-label { display: block; text-align: center; margin-bottom: 10px; }
+.lang-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 24px; }
+.lang-card {
+  display: flex; flex-direction: column; gap: 4px; align-items: center;
+  padding: 16px 10px; border-radius: var(--radius); color: var(--text);
+  background: var(--bg-raised); border: 1px solid var(--border);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.lang-card:hover { background: var(--bg-hover); }
+.lang-card--active { border-color: rgba(229, 72, 77, 0.55); background: var(--accent-soft); }
+.lang-card-name { font-size: 16px; font-weight: 650; }
+.lang-card-sample { font-size: 12px; color: var(--text-faint); }
+.onboarding-actions { display: flex; justify-content: center; gap: 10px; margin-top: 8px; }
+.onboarding-actions--split { justify-content: space-between; align-items: center; }
+.onboarding-actions-right { display: inline-flex; gap: 10px; }
+.onboarding-actions--stack { flex-direction: column; align-items: stretch; }
+.onboarding-actions--stack .btn { text-align: center; }
+.link-btn {
+  display: block; margin: 14px auto 0; background: none; border: none; padding: 4px;
+  color: var(--text-faint); font-size: 13px; text-decoration: underline; text-underline-offset: 3px;
+}
+.link-btn:hover { color: var(--text-dim); }

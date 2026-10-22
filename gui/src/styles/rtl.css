@@ -1,0 +1,9 @@
+
+html[lang='fa'] body {
+  font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+html[lang='fa'] .wordmark { letter-spacing: 0; }
+html[lang='fa'] h1, html[lang='fa'] h2 { letter-spacing: 0; }
+[dir='rtl'] .project-path { direction: ltr; }
+[dir='rtl'] .msg--user { align-self: flex-start; }
+[dir='ltr'] .msg--user { align-self: flex-end; }

@@ -1,0 +1,49 @@
+/* ---------------- header ---------------- */
+
+.header {
+  display: flex; align-items: center; gap: 18px;
+  padding: 0 16px; height: 54px; flex: none;
+  border-bottom: 1px solid var(--border);
+  background: rgba(13, 14, 18, 0.82);
+  backdrop-filter: blur(12px);
+  z-index: 5;
+}
+
+.brand { display: flex; align-items: center; gap: 9px; flex: none; }
+.logo { color: var(--accent); display: inline-flex; filter: drop-shadow(0 0 10px var(--accent-glow)); }
+.wordmark { font-size: 16.5px; font-weight: 650; letter-spacing: -0.02em; white-space: nowrap; }
+.wordmark-accent { color: var(--accent-bright); }
+.wordmark-fa { color: var(--text-faint); font-size: 12.5px; margin-inline-start: 2px; white-space: nowrap; }
+@media (max-width: 1100px) { .wordmark-fa { display: none; } }
+
+.header-project {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; justify-content: center;
+}
+.project-label { display: inline-flex; align-items: baseline; gap: 9px; min-width: 0; }
+.project-name {
+  color: var(--text); font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.project-path {
+  color: var(--text-faint); font-family: var(--font-mono); font-size: 11px;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left; /* keep the tail (folder name) visible */
+}
+.project-path--empty { direction: ltr; font-family: var(--font); color: var(--text-faint); font-size: 12.5px; }
+@media (max-width: 1100px) { .project-path { display: none; } }
+
+.header-right { display: flex; align-items: center; gap: 10px; flex: none; }
+.model-label { color: var(--text-faint); font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap; }
+@media (max-width: 1100px) { .model-label { display: none; } }
+
+.mode-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+  border: 1px solid var(--border-strong); white-space: nowrap;
+}
+.mode-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.mode-badge--live { color: var(--green); background: rgba(70, 192, 122, 0.1); border-color: rgba(70, 192, 122, 0.3); }
+.mode-badge--live .mode-dot { box-shadow: 0 0 8px var(--green); animation: dotPulse 2.4s ease-in-out infinite; }
+.mode-badge--preview { color: var(--amber); background: rgba(232, 161, 60, 0.1); border-color: rgba(232, 161, 60, 0.3); }
+
+@keyframes dotPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }

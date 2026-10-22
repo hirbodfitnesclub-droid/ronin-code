@@ -1,0 +1,36 @@
+/* ---------------- settings modal ---------------- */
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(4, 5, 7, 0.66); backdrop-filter: blur(6px);
+  display: grid; place-items: center; padding: 20px;
+  animation: fadeIn 0.18s ease both;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  width: min(440px, 100%); border-radius: 20px; padding: 22px;
+  background: linear-gradient(180deg, #171a21, #12141a);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.85);
+  animation: modalIn 0.24s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.modal-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; }
+.field-label { font-size: 12.5px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.01em; }
+.field-hint { font-size: 11.5px; color: var(--text-faint); }
+.field input, .field select {
+  background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  color: var(--text); font-family: inherit; font-size: 14px; padding: 10px 12px; outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease; width: 100%;
+}
+.field input:focus, .field select:focus { border-color: rgba(255, 255, 255, 0.22); box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.08); }
+.field select option { background: var(--bg-raised); }
+
+.test-result { border-radius: var(--radius-sm); padding: 9px 12px; font-size: 13px; margin: 4px 0 12px; }
+.test-result--ok { color: #9fe3bb; background: rgba(70, 192, 122, 0.1); border: 1px solid rgba(70, 192, 122, 0.32); }
+.test-result--bad { color: #ffb3b6; background: rgba(229, 72, 77, 0.1); border: 1px solid rgba(229, 72, 77, 0.32); }
+
+.modal-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; }

@@ -1,0 +1,17 @@
+/* ---------------- layout ---------------- */
+
+.app { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+
+.main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(360px, 5fr) 7fr;
+  min-height: 0;
+}
+.main--chat-only { grid-template-columns: minmax(360px, 720px) 40px; justify-content: center; }
+
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; }
+  .preview-panel { display: none; }
+  .preview-reopen { display: none; }
+}

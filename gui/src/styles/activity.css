@@ -1,0 +1,238 @@
+/* ============================================================
+   ActivityVisual — the star of the working state.
+   Visuals only, never text. Each phase owns a LARGE stage panel
+   with its own motion language and accent tint:
+     thinking  = large breathing presence (crimson)
+     reading   = file tiles, scanning sweep (cyan)
+     writing   = streaming line shimmer (crimson)
+     editing   = glowing change lines (amber)
+     terminal  = waveform bars (cyan/green)
+     searching = radar sweep (cyan)
+   Motion is transform/opacity only (GPU-friendly).
+   ============================================================ */
+
+.activity {
+  display: flex; align-items: center; gap: 26px;
+  width: 100%;
+  padding: 26px 28px; border-radius: 20px;
+  border: 1px solid var(--border-strong);
+  background:
+    radial-gradient(420px 220px at 8% 50%, rgba(229, 72, 77, 0.13), transparent 70%),
+    radial-gradient(360px 200px at 96% 0%, rgba(86, 200, 216, 0.05), transparent 70%),
+    linear-gradient(180deg, var(--bg-raised), var(--bg-panel));
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  animation: msgIn 0.35s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+  overflow: hidden;
+}
+
+.activity-orb { position: relative; width: 104px; height: 104px; flex: none; display: grid; place-items: center; }
+.orb-core {
+  width: 42px; height: 42px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 32%, var(--accent-bright), var(--accent) 58%, #8c2226);
+  box-shadow: 0 0 44px var(--accent-glow), 0 0 110px rgba(229, 72, 77, 0.22);
+  animation: breathe 2.8s ease-in-out infinite;
+}
+.orb-halo {
+  position: absolute; inset: 2px; border-radius: 50%;
+  border: 1px solid rgba(229, 72, 77, 0.38);
+  animation: haloPulse 2.8s ease-out infinite;
+}
+.orb-particle {
+  position: absolute; top: 50%; left: 50%; width: 5px; height: 5px; margin: -2.5px;
+  border-radius: 50%; background: var(--accent-bright); opacity: 0.85;
+}
+.orb-particle--1 { animation: orbit1 3.4s linear infinite; }
+.orb-particle--2 { animation: orbit2 5.2s linear infinite reverse; background: var(--cyan); opacity: 0.65; }
+.orb-particle--3 { animation: orbit1 6.4s linear infinite reverse; opacity: 0.5; }
+
+@keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.16); } }
+@keyframes haloPulse {
+  0% { transform: scale(0.52); opacity: 0.9; }
+  70% { opacity: 0.12; }
+  100% { transform: scale(1.14); opacity: 0; }
+}
+@keyframes orbit1 { from { transform: rotate(0deg) translateX(40px); } to { transform: rotate(360deg) translateX(40px); } }
+@keyframes orbit2 { from { transform: rotate(120deg) translateX(46px); } to { transform: rotate(480deg) translateX(46px); } }
+
+.activity-motifs { display: flex; gap: 14px; flex-wrap: wrap; align-items: stretch; flex: 1; min-width: 0; }
+.activity-motif {
+  display: flex; align-items: center; justify-content: center;
+  flex: 1 1 190px; min-height: 118px;
+  padding: 18px; border-radius: 14px;
+  border: 1px solid var(--border); background: rgba(255, 255, 255, 0.02);
+  animation: msgIn 0.4s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+.activity-motif--reading, .activity-motif--searching, .activity-motif--terminal {
+  border-color: rgba(86, 200, 216, 0.22);
+  background: radial-gradient(200px 110px at 50% 0%, rgba(86, 200, 216, 0.06), transparent 75%), rgba(255, 255, 255, 0.02);
+}
+.activity-motif--editing {
+  border-color: rgba(232, 161, 60, 0.24);
+  background: radial-gradient(200px 110px at 50% 0%, rgba(232, 161, 60, 0.06), transparent 75%), rgba(255, 255, 255, 0.02);
+}
+.activity-motif--writing {
+  border-color: rgba(229, 72, 77, 0.24);
+  background: radial-gradient(200px 110px at 50% 0%, rgba(229, 72, 77, 0.07), transparent 75%), rgba(255, 255, 255, 0.02);
+}
+.motif { display: flex; align-items: center; }
+
+/* reading — large file tiles with a scanning light sweep */
+.motif--reading { gap: 10px; }
+.tile {
+  position: relative; overflow: hidden; width: 58px; height: 74px;
+  border-radius: 9px; border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.03);
+  display: flex; flex-direction: column; gap: 6px; padding: 11px 8px;
+  animation: tileGlow 1.9s ease-in-out infinite;
+}
+.tile-line { display: block; height: 4.5px; border-radius: 4px; background: rgba(255, 255, 255, 0.3); flex: none; }
+.tile-line--short { background: rgba(255, 255, 255, 0.15); }
+.tile-scan {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(86, 200, 216, 0.3) 48%, rgba(86, 200, 216, 0.6) 52%, transparent 100%);
+  background-size: 100% 260%;
+  animation: scanY 1.7s ease-in-out infinite;
+}
+@keyframes scanY { 0% { background-position: 50% 130%; } 55%, 100% { background-position: 50% -130%; } }
+@keyframes tileGlow { 0%, 100% { border-color: var(--border-strong); } 50% { border-color: rgba(86, 200, 216, 0.45); } }
+
+/* writing — wide line bars with a shimmering streaming fill */
+.motif--writing { flex-direction: column; gap: 9px; width: 230px; max-width: 100%; align-items: stretch; }
+.write-row { height: 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.write-fill {
+  display: block; height: 100%; border-radius: 8px; transform-origin: left;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-bright) 55%, rgba(255, 99, 105, 0.25) 78%, var(--accent-bright) 100%);
+  background-size: 220% 100%;
+  animation: writeFill 1.9s ease-in-out infinite, shimmerX 1.15s linear infinite;
+}
+@keyframes writeFill { 0% { transform: scaleX(0.08); opacity: 0.5; } 55% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0.75; } }
+@keyframes shimmerX { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+/* editing — wide lines with a glowing change sweep */
+.motif--editing { flex-direction: column; gap: 9px; width: 230px; max-width: 100%; align-items: stretch; position: relative; }
+.edit-row { position: relative; height: 8px; }
+.edit-line { display: block; height: 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.22); }
+.edit-row:nth-child(2) .edit-line, .edit-row:nth-child(4) .edit-line {
+  background: linear-gradient(90deg, rgba(232, 161, 60, 0.75), rgba(232, 161, 60, 0.35));
+  box-shadow: 0 0 12px rgba(232, 161, 60, 0.35);
+}
+.edit-sweep {
+  position: absolute; top: -4px; bottom: -4px; width: 34%; border-radius: 8px;
+  background: linear-gradient(90deg, transparent, rgba(232, 161, 60, 0.55), transparent);
+  animation: sweepX 1.6s ease-in-out infinite;
+}
+@keyframes sweepX { 0% { left: -35%; opacity: 0; } 25% { opacity: 1; } 75% { opacity: 1; } 100% { left: 100%; opacity: 0; } }
+
+/* terminal — window outline with a pulsing waveform */
+.motif--terminal { flex-direction: column; align-items: stretch; gap: 10px; width: 230px; max-width: 100%; }
+.term-chrome { display: flex; gap: 5px; }
+.term-chrome i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, 0.22); display: block; }
+.term-chrome i:first-child { background: rgba(229, 72, 77, 0.7); }
+.term-eq { display: flex; align-items: flex-end; gap: 5px; height: 38px; }
+.eq-bar {
+  flex: 1; border-radius: 4px 4px 2px 2px; min-height: 5px;
+  background: linear-gradient(180deg, var(--cyan), rgba(86, 200, 216, 0.35));
+  animation: eqBounce 0.8s ease-in-out infinite alternate;
+  transform-origin: bottom;
+}
+@keyframes eqBounce { from { height: 22%; } to { height: 96%; } }
+
+/* searching — large radar sweep over tiles */
+.motif--searching { gap: 16px; }
+.radar {
+  position: relative; width: 74px; height: 74px; border-radius: 50%; flex: none;
+  border: 1px solid rgba(86, 200, 216, 0.45); overflow: hidden;
+  background: radial-gradient(circle, rgba(86, 200, 216, 0.12), transparent 70%);
+}
+.radar-ring { position: absolute; inset: 16px; border-radius: 50%; border: 1px solid rgba(86, 200, 216, 0.3); }
+.radar-ring--outer { inset: 6px; border-color: rgba(86, 200, 216, 0.18); }
+.radar-sweep {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(86, 200, 216, 0.6), transparent 22%);
+  animation: radarSpin 2.2s linear infinite;
+}
+.radar-dot { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: var(--cyan); animation: dotPulse 1.8s ease-in-out infinite; }
+.radar-dot--a { top: 20px; left: 44px; }
+.radar-dot--b { top: 48px; left: 22px; animation-delay: 0.7s; }
+@keyframes radarSpin { to { transform: rotate(360deg); } }
+.search-tiles { display: flex; gap: 8px; }
+.tile--mini { width: 44px; height: 56px; padding: 10px 6px; }
+
+/* thinking — slow orbiting particles around the presence */
+.motif--thinking { position: relative; width: 96px; height: 88px; }
+.think-core {
+  position: absolute; top: 50%; left: 50%; width: 15px; height: 15px; margin: -7.5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 32%, var(--accent-bright), var(--accent) 60%, #8c2226);
+  box-shadow: 0 0 18px var(--accent-glow);
+  animation: breathe 2.6s ease-in-out infinite;
+}
+.think-core::after {
+  content: ''; position: absolute; inset: -9px; border-radius: 50%;
+  border: 1px solid rgba(229, 72, 77, 0.35);
+  animation: haloPulse 2.6s ease-out infinite;
+}
+.orbit { position: absolute; inset: 0; display: block; }
+.orbit i {
+  position: absolute; top: 50%; left: 50%; width: 7px; height: 7px; margin: -3.5px;
+  border-radius: 50%; background: var(--accent-bright); box-shadow: 0 0 10px var(--accent-glow);
+  display: block;
+}
+@keyframes spinOnly { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.orbit--a { animation: spinOnly 3.2s linear infinite; }
+.orbit--a i { transform: translateX(36px); }
+.orbit--b { animation: spinOnly 4.6s linear infinite; }
+.orbit--b i { transform: translateX(42px); background: #fff; opacity: 0.75; width: 5px; height: 5px; }
+.orbit--c { animation: spinOnly 6s linear infinite reverse; }
+.orbit--c i { transform: translateX(28px); background: var(--amber); opacity: 0.85; width: 6px; height: 6px; }
+
+.activity-motif--planning {
+  border-color: rgba(139, 124, 255, 0.26);
+  background: radial-gradient(200px 110px at 50% 0%, rgba(139, 124, 255, 0.07), transparent 75%), rgba(255, 255, 255, 0.02);
+}
+.activity-motif--reviewing {
+  border-color: rgba(61, 220, 151, 0.24);
+  background: radial-gradient(200px 110px at 50% 0%, rgba(61, 220, 151, 0.06), transparent 75%), rgba(255, 255, 255, 0.02);
+}
+
+/* planning — steps of a plan assembling one by one, violet */
+.motif--planning { flex-direction: column; gap: 13px; width: 230px; max-width: 100%; align-items: stretch; position: relative; }
+.plan-step { display: flex; align-items: center; gap: 11px; animation: planStepIn 2.7s ease-in-out infinite; }
+.plan-node {
+  width: 13px; height: 13px; border-radius: 4.5px; flex: none;
+  border: 1.5px solid rgba(139, 124, 255, 0.55);
+  background: rgba(139, 124, 255, 0.14);
+  box-shadow: 0 0 0 rgba(139, 124, 255, 0);
+  animation: planNodeGlow 2.7s ease-in-out infinite;
+}
+.plan-bar { height: 7px; border-radius: 7px; background: linear-gradient(90deg, rgba(139, 124, 255, 0.75), rgba(139, 124, 255, 0.3)); transform-origin: left; animation: planBarGrow 2.7s ease-in-out infinite; }
+.plan-link {
+  position: absolute; left: 6px; top: 12px; bottom: 12px; width: 1.5px;
+  background: linear-gradient(180deg, rgba(139, 124, 255, 0.05), rgba(139, 124, 255, 0.4), rgba(139, 124, 255, 0.05));
+}
+@keyframes planStepIn { 0%, 8% { opacity: 0.6; } 30%, 82% { opacity: 1; } 100% { opacity: 0.6; } }
+@keyframes planNodeGlow { 0%, 8% { box-shadow: 0 0 6px rgba(139, 124, 255, 0.25); } 30%, 82% { box-shadow: 0 0 14px rgba(139, 124, 255, 0.55); } 100% { box-shadow: 0 0 6px rgba(139, 124, 255, 0.25); } }
+@keyframes planBarGrow { 0%, 10% { transform: scaleX(0.45); opacity: 0.75; } 38%, 82% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(0.45); opacity: 0.75; } }
+
+/* reviewing — code lines swept by a beam, ticked off in emerald */
+.motif--reviewing { flex-direction: column; gap: 11px; width: 230px; max-width: 100%; align-items: stretch; position: relative; overflow: hidden; padding: 2px; }
+.review-row { display: flex; align-items: center; gap: 10px; height: 10px; }
+.review-line { height: 7px; border-radius: 7px; background: rgba(255, 255, 255, 0.22); flex: none; }
+.review-check {
+  width: 11px; height: 7px; flex: none; margin-left: auto;
+  border-left: 2.5px solid #3ddc97; border-bottom: 2.5px solid #3ddc97;
+  transform: rotate(-48deg) scale(0.4); opacity: 0;
+  filter: drop-shadow(0 0 5px rgba(61, 220, 151, 0.55));
+  animation: reviewCheck 2.9s ease-in-out infinite;
+}
+.review-beam {
+  position: absolute; left: 0; right: 0; height: 34%; top: -35%; pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(61, 220, 151, 0.13), transparent);
+  animation: reviewBeam 2.9s ease-in-out infinite;
+}
+@keyframes reviewCheck { 0%, 12% { opacity: 0; transform: rotate(-48deg) scale(0.4); } 30%, 84% { opacity: 1; transform: rotate(-48deg) scale(1); } 100% { opacity: 0; transform: rotate(-48deg) scale(0.4); } }
+@keyframes reviewBeam { 0% { top: -35%; } 70%, 100% { top: 105%; } }
+
+@media (max-width: 1100px) {
+  .activity { flex-direction: column; gap: 18px; padding: 22px; }
+}

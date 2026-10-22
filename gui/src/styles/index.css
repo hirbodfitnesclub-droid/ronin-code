@@ -1,0 +1,26 @@
+/* Ronin Code — style entry. Layered global CSS (no CSS Modules: the
+   class names are the DOM contract for QA fixtures and screenshots).
+   Import order IS the cascade — do not reorder:
+   tokens -> base -> layout -> shell -> features -> motion preferences. */
+@import './tokens.css';
+@import './base.css';
+@import './layout.css';
+@import './header.css';
+@import './buttons.css';
+@import './chat.css';
+@import './empty-state.css';
+@import './composer.css';
+@import './preview.css';
+@import './changes.css';
+@import './activity.css';
+@import './settings-modal.css';
+@import './reduced-motion.css';
+@import './fonts.css';
+@import './rtl.css';
+@import './header-toggles.css';
+@import './onboarding.css';
+@import './cards.css';
+@import './diff.css';
+@import './panels.css';
+@import './starters.css';
+@import './settings-sections.css';

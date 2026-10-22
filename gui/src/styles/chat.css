@@ -1,0 +1,39 @@
+/* ---------------- chat ---------------- */
+
+.chat-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-inline-end: 1px solid var(--border); background: rgba(255, 255, 255, 0.008); }
+.chat-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }
+.chat-scroll::-webkit-scrollbar { width: 8px; }
+.chat-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 8px; }
+
+.messages { display: flex; flex-direction: column; gap: 14px; padding: 22px 20px 12px; max-width: 720px; margin: 0 auto; width: 100%; }
+
+.msg { display: flex; animation: msgIn 0.28s cubic-bezier(0.22, 0.9, 0.3, 1) both; }
+@keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.msg--user { justify-content: flex-end; }
+.msg--error { justify-content: flex-start; }
+
+.msg-bubble { max-width: 88%; padding: 10px 15px; border-radius: 18px; font-size: 14.5px; }
+.msg-bubble p { margin: 0 0 6px; white-space: pre-wrap; word-break: break-word; }
+.msg-bubble p:last-child { margin-bottom: 0; }
+.msg-bubble ul { margin: 2px 0 8px; padding-left: 18px; }
+.msg-bubble ul:last-child { margin-bottom: 0; }
+.msg-bubble li { margin: 0 0 4px; line-height: 1.55; }
+.msg-bubble li:last-child { margin-bottom: 0; }
+.msg-bubble code {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 0.86em; padding: 1px 5px; border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.msg-bubble strong { font-weight: 650; }
+
+.msg--user .msg-bubble {
+  background: linear-gradient(180deg, #232833, #1d212b);
+  border: 1px solid var(--border-strong);
+  border-bottom-right-radius: 6px;
+}
+.msg--assistant .msg-bubble {
+  background: transparent; border: none; padding-inline: 2px; max-width: 100%; color: var(--text);
+}
+.msg--error .msg-bubble {
+  background: rgba(229, 72, 77, 0.09); border: 1px solid rgba(229, 72, 77, 0.32); color: #ffb3b6;
+}

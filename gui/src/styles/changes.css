@@ -1,0 +1,33 @@
+/* ---------------- changes card ---------------- */
+
+.changes-card {
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-panel));
+  padding: 14px; animation: msgIn 0.3s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+  box-shadow: 0 16px 36px -22px rgba(0, 0, 0, 0.8);
+}
+.changes-visual { display: flex; flex-wrap: wrap; gap: 8px; }
+.change-tile {
+  display: flex; flex-direction: column; gap: 7px; width: 104px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025); padding: 9px 10px;
+}
+.change-tile-lines { display: flex; flex-direction: column; gap: 4px; }
+.change-tile-lines i { display: block; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.22); }
+.change-tile-lines i.dim { background: rgba(255, 255, 255, 0.1); }
+.change-tile-name { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.change-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+.change-dot--created { background: var(--green); box-shadow: 0 0 7px rgba(70, 192, 122, 0.7); }
+.change-dot--modified { background: var(--amber); box-shadow: 0 0 7px rgba(232, 161, 60, 0.6); }
+.change-tile .change-dot { align-self: flex-start; }
+.change-more { align-self: center; color: var(--text-faint); font-size: 12.5px; padding: 0 4px; }
+
+.changes-summary { margin-top: 12px; font-size: 13.5px; font-weight: 550; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.changes-actions { display: flex; gap: 8px; margin-top: 10px; }
+.chevron { display: inline-block; margin-inline-start: 5px; transition: transform 0.18s ease; font-size: 11px; }
+.chevron--open { transform: rotate(180deg); }
+
+.changes-details { list-style: none; margin: 12px 0 2px; padding: 10px 12px 4px; border-top: 1px solid var(--border); }
+.changes-details li { display: flex; align-items: center; gap: 9px; padding: 4px 0; font-size: 12.5px; }
+.changes-details code { font-family: var(--font-mono); color: var(--text-dim); word-break: break-all; }
+.changes-details-action { margin-inline-start: auto; color: var(--text-faint); text-transform: capitalize; flex: none; }

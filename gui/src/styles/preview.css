@@ -1,0 +1,47 @@
+/* ---------------- preview panel ---------------- */
+
+.preview-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #0b0c10; }
+.preview-bar {
+  height: 42px; flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 0 10px 0 14px; border-bottom: 1px solid var(--border);
+}
+.preview-dots { display: inline-flex; gap: 6px; }
+.preview-dots i { width: 9px; height: 9px; border-radius: 50%; background: #2b2f38; display: block; }
+.preview-dots i:first-child { background: rgba(229, 72, 77, 0.55); }
+.preview-url {
+  flex: 1; color: var(--text-faint); font-family: var(--font-mono); font-size: 11.5px;
+  background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border);
+  border-radius: 7px; padding: 3px 10px; max-width: 420px;
+}
+.preview-bar-actions { display: inline-flex; gap: 2px; margin-inline-start: auto; }
+.preview-frame-wrap { flex: 1; position: relative; min-height: 0; background: #0b0c10; }
+.preview-empty {
+  position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px;
+  align-items: center; justify-content: center; text-align: center; padding: 32px;
+  background:
+    radial-gradient(560px 300px at 50% 38%, rgba(229, 72, 77, 0.07), transparent 65%),
+    radial-gradient(420px 260px at 82% 90%, rgba(86, 200, 216, 0.04), transparent 65%),
+    #0b0c10;
+}
+.preview-empty .logo { color: rgba(229, 72, 77, 0.55); transform: scale(1.7); margin-bottom: 18px; }
+.preview-empty-orb { position: relative; width: 76px; height: 76px; display: grid; place-items: center; margin-bottom: 6px; }
+.preview-empty-orb span {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 32%, var(--accent-bright), var(--accent) 58%, #8c2226);
+  box-shadow: 0 0 30px var(--accent-glow);
+  animation: breathe 4.2s ease-in-out infinite;
+}
+.preview-empty-orb::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  border: 1px solid rgba(229, 72, 77, 0.3);
+  animation: haloPulse 4.2s ease-out infinite;
+}
+.preview-empty-title { margin: 0; font-size: 16.5px; font-weight: 620; letter-spacing: -0.015em; color: var(--text-dim); }
+.preview-empty-sub { margin: 0; font-size: 13px; color: var(--text-faint); max-width: 340px; }
+.preview-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; background: #0b0c10; }
+.preview-reopen {
+  align-self: center; border: 1px solid var(--border); border-inline-start: none;
+  background: var(--bg-panel); color: var(--text-dim); border-radius: 0 10px 10px 0;
+  width: 26px; height: 64px; font-size: 18px;
+}
+.preview-reopen:hover { color: var(--text); background: var(--bg-hover); }
