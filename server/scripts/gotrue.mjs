@@ -65,7 +65,7 @@ export async function migrateGotrue(env) {
 
 /** Spawn `auth serve`; resolves once /health answers. Returns { stop, port }. */
 export async function startGotrue(env, { logFile = null } = {}) {
-  const out = logFile ? fs.createWriteStream(logFile, { flags: 'a' }) : 'ignore';
+  const out = logFile ? fs.openSync(logFile, 'a') : 'ignore';
   const child = spawn(gotrueBin(), ['serve'], { env, stdio: ['ignore', out, out] });
   const port = env.GOTRUE_API_PORT;
   const deadline = Date.now() + 30_000;

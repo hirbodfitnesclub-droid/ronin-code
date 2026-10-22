@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { hitRateLimit } from './ratelimit.js';
+import { countInWindowOn, recordHitOn } from './ratelimit.js';
 import { sha256Hex, minutes, days, badRequest, unauthorized, forbidden, tooMany, HttpError, ms } from './util.js';
 import { log } from './log.js';
 
@@ -89,25 +89,38 @@ async function killGotrueSession(db, sessionId) {
 // ── OTP: request ────────────────────────────────────────────────────────────
 export async function requestOtp(db, cfg, { phone, ip = '' }) {
   // Send rate limits: 60s cooldown, 5/day per phone, 20/day per IP (anti SMS-pumping).
-  if (!(await hitRateLimit(db, `otp:min:${phone}`, 1, minutes(1)))) throw tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.');
-  if (!(await hitRateLimit(db, `otp:day:${phone}`, 5, days(1)))) throw tooMany('otp_daily_limit', 'Daily code limit reached for this number.');
-  if (ip && !(await hitRateLimit(db, `otp:ip:${ip}`, 20, days(1)))) throw tooMany('otp_ip_limit', 'Too many code requests from this network.');
-
-  const { status, json } = await gotrue(cfg, '/otp', {
-    method: 'POST',
-    body: { phone: toE164(phone), create_user: true, channel: 'sms' },
+  // Check + send + record happen in ONE transaction under a per-phone
+  // advisory lock, and hits are recorded only after the Auth server actually
+  // accepted the send — a GoTrue-side rejection (its own SMS limiter) must
+  // not burn the user's cooldown budget.
+  const limits = [
+    { key: `otp:min:${phone}`, limit: 1, windowMs: minutes(1), error: () => tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.') },
+    { key: `otp:day:${phone}`, limit: 5, windowMs: days(1), error: () => tooMany('otp_daily_limit', 'Daily code limit reached for this number.') },
+    ...(ip ? [{ key: `otp:ip:${ip}`, limit: 20, windowMs: days(1), error: () => tooMany('otp_ip_limit', 'Too many code requests from this network.') }] : []),
+  ];
+  await db.tx(async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`otp-send:${phone}`]);
+    await client.query("DELETE FROM public.rate_events WHERE created_at < now() - interval '24 hours'");
+    for (const l of limits) {
+      if ((await countInWindowOn(client, l.key, l.windowMs)) >= l.limit) throw l.error();
+    }
+    const { status, json } = await gotrue(cfg, '/otp', {
+      method: 'POST',
+      body: { phone: toE164(phone), create_user: true, channel: 'sms' },
+    });
+    if (status === 429) throw tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.');
+    if (status < 200 || status >= 300) {
+      log.error('gotrue_otp_failed', { status, error: json?.error_code ?? json?.msg ?? 'unknown' });
+      throw new HttpError(502, 'otp_send_failed', 'Could not send the code. Try again.');
+    }
+    for (const l of limits) await recordHitOn(client, l.key);
+    // Fresh code → fresh brute-force budget.
+    await client.query(
+      `INSERT INTO public.otp_guards (phone, fail_count, issued_at, locked, updated_at)
+       VALUES ($1, 0, now(), false, now())
+       ON CONFLICT (phone) DO UPDATE SET fail_count = 0, issued_at = now(), locked = false, updated_at = now()`,
+      [phone]);
   });
-  if (status === 429) throw tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.');
-  if (status < 200 || status >= 300) {
-    log.error('gotrue_otp_failed', { status, error: json?.error_code ?? json?.msg ?? 'unknown' });
-    throw new HttpError(502, 'otp_send_failed', 'Could not send the code. Try again.');
-  }
-  // Fresh code → fresh brute-force budget.
-  await db.query(
-    `INSERT INTO public.otp_guards (phone, fail_count, issued_at, locked, updated_at)
-     VALUES ($1, 0, now(), false, now())
-     ON CONFLICT (phone) DO UPDATE SET fail_count = 0, issued_at = now(), locked = false, updated_at = now()`,
-    [phone]);
   return { sent: true };
 }
 

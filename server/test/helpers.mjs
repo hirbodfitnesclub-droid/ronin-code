@@ -1,15 +1,30 @@
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Client } from 'pg';
 import { loadConfig } from '../src/config.js';
-import { openDb } from '../src/db.js';
+import { createDb } from '../src/db.js';
 import { createSms } from '../src/sms/index.js';
 import { createUserApp } from '../src/app.js';
 import { createAdminApp } from '../src/admin/app.js';
+import { startPostgres } from '../scripts/pg-runtime.mjs';
+import { gotrueEnv, migrateGotrue, startGotrue } from '../scripts/gotrue.mjs';
+import { applyLocalPrereqs, applyLocalAuthGrants, applyMigrations } from '../scripts/migrate.mjs';
 
 export const ADMIN_PHONE = '09120000001';
 export const USER_PHONE = '09121111111';
+
+const GOTRUE_JWT_SECRET = 'ronin-test-jwt-secret-0123456789abcdef';
+const HOOK_SECRET = `v1,whsec_${Buffer.from('ronin-test-hook-secret-0123456789').toString('base64')}`;
+
+function freePort() {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+  });
+}
 
 /** Fake OpenAI-compatible upstream: canned usage, call counter, optional failure. */
 export function startFakeUpstream({ promptTokens = 100, completionTokens = 50 } = {}) {
@@ -38,39 +53,94 @@ export function startFakeUpstream({ promptTokens = 100, completionTokens = 50 } 
     resolve({ server, state, url: `http://127.0.0.1:${server.address().port}/v1` })));
 }
 
-/** Full stack: user API + standalone admin app on ephemeral ports, temp DB, console SMS. */
+/**
+ * Full stack on the REAL production-shaped infrastructure: local Postgres
+ * (genuine binaries) + real Supabase Auth (official GoTrue binary) + our
+ * migrations + user API + standalone admin app on ephemeral ports, console
+ * SMS. No mocks anywhere in the data/auth path.
+ */
 export async function startStack(overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ronin-test-'));
   const upstream = await startFakeUpstream(overrides.upstreamUsage ?? {});
-  const cfg = loadConfig({
-    dbPath: path.join(dir, 'test.db'),
-    authSecret: 'test-secret',
-    smsProvider: 'console',
-    adminPhones: [ADMIN_PHONE],
-    upstreamBaseUrl: upstream.url,
-    upstreamApiKey: 'upstream-test-key',
-    tokensPerUsd: 1000,
-    chatMaxConcurrent: 50,
-    chatRatePerMin: 10_000,
-    ...(overrides.cfg ?? {}),
-  });
-  const db = openDb(cfg);
-  const sms = createSms(cfg);
-  const api = createUserApp(db, cfg, sms);
-  const admin = createAdminApp(db, cfg, sms);
-  await Promise.all([
-    new Promise((r) => api.listen(0, '127.0.0.1', r)),
-    new Promise((r) => admin.listen(0, '127.0.0.1', r)),
-  ]);
-  return {
-    db, cfg, sms, upstream,
-    base: `http://127.0.0.1:${api.address().port}`,
-    adminBase: `http://127.0.0.1:${admin.address().port}`,
-    async close() {
-      api.close(); admin.close(); upstream.server.close();
-      fs.rmSync(dir, { recursive: true, force: true });
-    },
-  };
+  const pgPort = await freePort();
+  const gotruePort = await freePort();
+  const otpExpSeconds = overrides.gotrue?.smsOtpExpSeconds ?? 300;
+  const pg = await startPostgres({ dataDir: path.join(dir, 'pg'), port: pgPort });
+  let gotrue = null;
+  let db = null;
+  let api = null;
+  let admin = null;
+  try {
+    const adminClient = new Client({ connectionString: pg.url('postgres') });
+    await adminClient.connect();
+    await adminClient.query('CREATE DATABASE ronin_test');
+    await adminClient.end();
+
+    const superClient = new Client({ connectionString: pg.url('ronin_test') });
+    await superClient.connect();
+    await applyLocalPrereqs(superClient);
+    const baseGotrueEnv = {
+      dbUrl: pg.url('ronin_test'), port: gotruePort, jwtSecret: GOTRUE_JWT_SECRET,
+      smsOtpExpSeconds: otpExpSeconds, smsMaxFrequency: '100ms',
+    };
+    await migrateGotrue(gotrueEnv(baseGotrueEnv));
+    await applyLocalAuthGrants(superClient);
+    await applyMigrations(superClient);
+    await superClient.end();
+
+    const cfg = loadConfig({
+      databaseUrl: `postgres://service_role:ronin-local-service@127.0.0.1:${pgPort}/ronin_test`,
+      supabaseAuthUrl: `http://127.0.0.1:${gotruePort}`,
+      supabaseJwtSecret: GOTRUE_JWT_SECRET,
+      authHookSecret: HOOK_SECRET,
+      otpTtlSeconds: otpExpSeconds,
+      authSecret: 'test-secret',
+      smsProvider: 'console',
+      adminPhones: [ADMIN_PHONE],
+      upstreamBaseUrl: upstream.url,
+      upstreamApiKey: 'upstream-test-key',
+      tokensPerUsd: 1000,
+      chatMaxConcurrent: 50,
+      chatRatePerMin: 10_000,
+      ...(overrides.cfg ?? {}),
+    });
+    db = createDb(cfg);
+    const sms = createSms(cfg);
+    api = createUserApp(db, cfg, sms);
+    admin = createAdminApp(db, cfg, sms);
+    await Promise.all([
+      new Promise((r) => api.listen(0, '127.0.0.1', r)),
+      new Promise((r) => admin.listen(0, '127.0.0.1', r)),
+    ]);
+    gotrue = await startGotrue(gotrueEnv({
+      ...baseGotrueEnv,
+      hookUrl: `http://127.0.0.1:${api.address().port}/hooks/send-sms`,
+      hookSecret: HOOK_SECRET,
+    }), { logFile: path.join(dir, 'gotrue.log') });
+
+    return {
+      db, cfg, sms, upstream,
+      base: `http://127.0.0.1:${api.address().port}`,
+      adminBase: `http://127.0.0.1:${admin.address().port}`,
+      async close() {
+        if (gotrue) await gotrue.stop();
+        api.closeAllConnections?.();
+        admin.closeAllConnections?.();
+        api.close();
+        admin.close();
+        upstream.server.close();
+        await db.end();
+        await pg.stop();
+        fs.rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  } catch (e) {
+    if (gotrue) await gotrue.stop().catch(() => {});
+    if (db) await db.end().catch(() => {});
+    await pg.stop().catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw e;
+  }
 }
 
 export async function req(base, path, { method = 'GET', token, cookie, csrf, body, headers = {} } = {}) {
@@ -98,13 +168,30 @@ export function lastOtpFor(sms, phone) {
 }
 
 /** Simulate time passing for OTP send-cooldowns between repeat logins. */
-export function resetRateLimits(db) {
-  db.exec('DELETE FROM rate_events');
+export async function resetRateLimits(db) {
+  await db.query('DELETE FROM public.rate_events');
+}
+
+/**
+ * Request an OTP, pacing GoTrue's built-in per-user SMS limiter (1 send per
+ * wall-clock second, not configurable below that): on a cooldown response,
+ * wait a beat and retry — the test-time equivalent of resetRateLimits for
+ * our own limiter.
+ */
+async function requestOtpPaced(base, phone, admin = false) {
+  const path = admin ? '/admin-api/auth/otp/request' : '/api/auth/otp/request';
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const r = await req(base, path, { method: 'POST', body: { phone } });
+    if (r.status === 200) return r;
+    if (r.status !== 429) return r;
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+  }
+  return req(base, path, { method: 'POST', body: { phone } });
 }
 
 export async function loginUser(stack, phone = USER_PHONE, deviceName = 'test-device') {
-  resetRateLimits(stack.db);
-  const r1 = await req(stack.base, '/api/auth/otp/request', { method: 'POST', body: { phone } });
+  await resetRateLimits(stack.db);
+  const r1 = await requestOtpPaced(stack.base, phone);
   if (r1.status !== 200) throw new Error(`otp request failed: ${r1.status} ${r1.text}`);
   const code = lastOtpFor(stack.sms, phone);
   const r2 = await req(stack.base, '/api/auth/otp/verify', { method: 'POST', body: { phone, code, deviceName } });
@@ -113,8 +200,8 @@ export async function loginUser(stack, phone = USER_PHONE, deviceName = 'test-de
 }
 
 export async function loginAdmin(stack) {
-  resetRateLimits(stack.db);
-  const r1 = await req(stack.adminBase, '/admin-api/auth/otp/request', { method: 'POST', body: { phone: ADMIN_PHONE } });
+  await resetRateLimits(stack.db);
+  const r1 = await requestOtpPaced(stack.adminBase, ADMIN_PHONE, true);
   if (r1.status !== 200) throw new Error(`admin otp request failed: ${r1.status} ${r1.text}`);
   const code = lastOtpFor(stack.sms, ADMIN_PHONE);
   const r2 = await req(stack.adminBase, '/admin-api/auth/otp/verify', { method: 'POST', body: { phone: ADMIN_PHONE, code } });
@@ -123,7 +210,7 @@ export async function loginAdmin(stack) {
   return { cookie, csrf: r2.json.csrfToken, phone: ADMIN_PHONE };
 }
 
-/** Give a user credit directly (test setup shortcut via the real ledger path). */
+/** Give a user credit directly (test setup shortcut via the real RPC path). */
 export async function grant(stack, userId, tokens) {
   const { adjustCredit } = await import('../src/ledger.js');
   return adjustCredit(stack.db, { userId, tokens, actor: 'admin:test', note: 'test grant' });

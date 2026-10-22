@@ -98,7 +98,7 @@ test('max 3 pending orders per user', async () => {
 
 test('OTP brute force: 5 wrong attempts lock the code, even the right code then fails', async () => {
   const phone = '09124444444';
-  resetRateLimits(stack.db);
+  await resetRateLimits(stack.db);
   await req(stack.base, '/api/auth/otp/request', { method: 'POST', body: { phone } });
   const good = lastOtpFor(stack.sms, phone);
   const wrong = good === '000000' ? '000001' : '000000';
@@ -111,14 +111,21 @@ test('OTP brute force: 5 wrong attempts lock the code, even the right code then 
 });
 
 test('expired OTP is rejected', async () => {
-  const phone = '09125555555';
-  resetRateLimits(stack.db);
-  await req(stack.base, '/api/auth/otp/request', { method: 'POST', body: { phone } });
-  const code = lastOtpFor(stack.sms, phone);
-  stack.db.prepare('UPDATE otp_codes SET expires_at = ? WHERE phone = ?').run(Date.now() - 1000, phone);
-  const r = await req(stack.base, '/api/auth/otp/verify', { method: 'POST', body: { phone, code } });
-  assert.equal(r.status, 400);
-  assert.equal(r.json.error.code, 'otp_expired');
+  // OTPs now live in Supabase Auth: expiry is exercised through a stack whose
+  // Auth server is configured with a 1-second OTP lifetime (same product
+  // scenario as the old direct table poke, through the real config surface).
+  const s2 = await startStack({ gotrue: { smsOtpExpSeconds: 1 } });
+  try {
+    const phone = '09125555555';
+    await req(s2.base, '/api/auth/otp/request', { method: 'POST', body: { phone } });
+    const code = lastOtpFor(s2.sms, phone);
+    await new Promise((r) => setTimeout(r, 1300));
+    const r = await req(s2.base, '/api/auth/otp/verify', { method: 'POST', body: { phone, code } });
+    assert.equal(r.status, 400);
+    assert.equal(r.json.error.code, 'otp_expired');
+  } finally {
+    await s2.close();
+  }
 });
 
 test('refresh rotation works; reuse of a rotated token kills the whole family', async () => {
@@ -189,16 +196,61 @@ test('admin manual charge requires a note and writes an adjust ledger entry + au
 test('expiry sweep debits expired lots through the ledger', async () => {
   const u = await loginUser(stack, '09129999999');
   const { grantCredit, runExpirySweep, ledgerBalance } = await import('../src/ledger.js');
-  const { tx } = await import('../src/db.js');
-  tx(stack.db, () => grantCredit(stack.db, {
+  await grantCredit(stack.db, {
     userId: u.user.id, tokens: 300, kind: 'purchase', refType: 'order', refId: 999,
     actor: 'admin:test', expiresAt: Date.now() - 1000,
-  }));
-  assert.equal(ledgerBalance(stack.db, u.user.id), 300);
-  const out = runExpirySweep(stack.db, {});
+  });
+  assert.equal(await ledgerBalance(stack.db, u.user.id), 300);
+  const out = await runExpirySweep(stack.db, {});
   assert.equal(out.expired, 1);
-  assert.equal(ledgerBalance(stack.db, u.user.id), 0);
+  assert.equal(await ledgerBalance(stack.db, u.user.id), 0);
   const credits = await req(stack.base, '/api/credits', { token: u.accessToken });
   assert.ok(credits.json.ledger.some((l) => l.kind === 'expire' && l.deltaTokens === -300));
   assert.ok(ADMIN_PHONE.length === 11);
+});
+
+test('daily revalidation: account-status reflects server truth; revoked device and suspension fail the check', async () => {
+  const { grant } = await import('./helpers.mjs');
+  const phone = '09120000333';
+  const d1 = await loginUser(stack, phone, 'daily-device-1');
+  await grant(stack, d1.user.id, 500);
+
+  // The lightweight status the app polls on launch + daily.
+  const ok = await req(stack.base, '/api/account-status', { token: d1.accessToken });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.status, 'active');
+  assert.equal(ok.json.isActive, true);
+  assert.equal(ok.json.deviceAuthorized, true);
+  assert.equal(ok.json.balanceTokens, 500);
+  assert.equal(ok.json.spendableTokens, 500);
+  assert.ok(Math.abs(Date.now() - ok.json.serverTime) < 60_000, 'serverTime must be the server clock');
+  assert.ok(Array.isArray(ok.json.lots) && ok.json.lots.some((l) => l.tokensLeft === 500));
+
+  // Revoke device 1 from device 2 → device 1 fails its next check outright.
+  const d2 = await loginUser(stack, phone, 'daily-device-2');
+  const del = await req(stack.base, `/api/devices/${d1.deviceId}`, { method: 'DELETE', token: d2.accessToken });
+  assert.equal(del.status, 200);
+  const revokedCheck = await req(stack.base, '/api/account-status', { token: d1.accessToken });
+  assert.equal(revokedCheck.status, 401);
+
+  // Admin suspension kills live sessions: the very next check fails.
+  const off = await req(stack.adminBase, `/admin-api/users/${d1.user.id}/toggle-active`, {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { isActive: false },
+  });
+  assert.equal(off.status, 200);
+  const killedCheck = await req(stack.base, '/api/account-status', { token: d2.accessToken });
+  assert.equal(killedCheck.status, 401);
+
+  // Even a flag-only suspension (e.g. flipped by a billing job, sessions not
+  // yet revoked) takes effect at the next check — as account_disabled.
+  const on = await req(stack.adminBase, `/admin-api/users/${d1.user.id}/toggle-active`, {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { isActive: true },
+  });
+  assert.equal(on.status, 200);
+  const d3 = await loginUser(stack, phone, 'daily-device-3');
+  await stack.db.query('UPDATE public.users SET is_active = false WHERE id = $1', [d1.user.id]);
+  const flagCheck = await req(stack.base, '/api/account-status', { token: d3.accessToken });
+  assert.equal(flagCheck.status, 401);
+  assert.equal(flagCheck.json.error.code, 'account_disabled');
+  await stack.db.query('UPDATE public.users SET is_active = true WHERE id = $1', [d1.user.id]);
 });

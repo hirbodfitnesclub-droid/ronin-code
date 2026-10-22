@@ -33,7 +33,10 @@ export async function applyLocalPrereqs(client) {
  */
 export async function applyLocalAuthGrants(client) {
   try {
-    await client.query('GRANT DELETE ON auth.sessions, auth.refresh_tokens TO service_role');
+    await client.query('GRANT USAGE ON SCHEMA auth TO service_role');
+    // SELECT is required alongside DELETE: on RLS-enabled tables a DELETE
+    // with a WHERE clause must be able to read the rows it targets.
+    await client.query('GRANT SELECT, DELETE ON auth.sessions, auth.refresh_tokens TO service_role');
   } catch { /* see note above */ }
 }
 

@@ -11,6 +11,8 @@
   "scripts": {
     "admin": "node src/admin-main.js",
     "start": "node src/server.js",
+    "dev": "node scripts/dev-stack.mjs",
+    "migrate": "node scripts/migrate.mjs --local",
     "test": "node --test test/*.test.mjs"
   },
   "type": "module",

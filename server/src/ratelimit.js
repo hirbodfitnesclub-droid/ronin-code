@@ -24,3 +24,15 @@ export async function countInWindow(db, key, windowMs) {
     [key, windowMs]);
   return row.c;
 }
+
+/** Transaction-scoped variants for check-then-act flows (see auth.requestOtp). */
+export async function countInWindowOn(client, key, windowMs) {
+  const r = await client.query(
+    "SELECT count(*)::int AS c FROM public.rate_events WHERE key = $1 AND created_at > now() - ($2::bigint * interval '1 millisecond')",
+    [key, windowMs]);
+  return r.rows[0].c;
+}
+
+export async function recordHitOn(client, key) {
+  await client.query('INSERT INTO public.rate_events (key) VALUES ($1)', [key]);
+}
