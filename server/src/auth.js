@@ -59,6 +59,30 @@ async function gotrue(cfg, path, { method = 'GET', token = null, body = null } =
   return { status: res.status, json };
 }
 
+function signHs256(payload, secret) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const head = b64({ alg: 'HS256', typ: 'JWT' });
+  const body = b64(payload);
+  const sig = crypto.createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url');
+  return `${head}.${body}.${sig}`;
+}
+
+/**
+ * App-session access token (handoff devices only). GoTrue's generate_link
+ * is email-only (verified on the pinned v2.197 binary), so the handoff
+ * exchange mints OUR OWN sessions: an HS256 JWT over cfg.authSecret,
+ * tagged ronin:'handoff', with the same 15-minute TTL as GoTrue tokens.
+ * authenticate() verifies these FIRST, then applies the exact same
+ * device-registry + user checks as the GoTrue path.
+ */
+export function signAppAccessToken(cfg, { userId, sessionId }) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return signHs256({
+    sub: userId, session_id: sessionId, ronin: 'handoff',
+    iat: nowSec, exp: Math.floor((Date.now() + ACCESS_TTL_MS) / 1000),
+  }, cfg.authSecret);
+}
+
 function decodeJwtPayload(token) {
   try { return JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')); }
   catch { return null; }
@@ -174,6 +198,22 @@ export async function loginWithOtp(db, cfg, { phone, code, deviceName = null, na
     throw forbidden('account_disabled', 'This account is disabled.');
   }
 
+  const deviceId = await registerDevice(db, cfg, {
+    user, sessionId, deviceName, kind: 'gotrue', refreshToken: session.refresh_token,
+  });
+  return {
+    user: publicUser(user), deviceId,
+    accessToken: session.access_token, refreshToken: session.refresh_token,
+  };
+}
+
+/**
+ * Device-cap enforcement + device row creation + refresh-hash registration,
+ * shared by the GoTrue OTP login and the handoff exchange. `kind` records
+ * which session domain the device belongs to ('gotrue' | 'handoff') so
+ * refreshSession rotates through the right authority.
+ */
+export async function registerDevice(db, cfg, { user, sessionId, deviceName = null, kind = 'gotrue', refreshToken }) {
   // Device cap: revoke oldest active devices beyond (maxDevices - 1) to make room.
   const active = await db.many(
     'SELECT id FROM public.devices WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at ASC',
@@ -182,18 +222,14 @@ export async function loginWithOtp(db, cfg, { phone, code, deviceName = null, na
   for (const d of active.slice(0, Math.max(0, excess))) {
     await revokeDeviceById(db, d.id);
   }
-
   const dev = await db.one(
-    'INSERT INTO public.devices (user_id, auth_session_id, name, last_seen_at) VALUES ($1,$2,$3,now()) RETURNING id',
-    [user.id, sessionId, deviceName]);
+    'INSERT INTO public.devices (user_id, auth_session_id, name, kind, last_seen_at) VALUES ($1,$2,$3,$4,now()) RETURNING id',
+    [user.id, sessionId, deviceName, kind]);
   await db.query(
     'INSERT INTO public.device_refresh_tokens (device_id, token_hash) VALUES ($1,$2)',
-    [dev.id, sha256Hex(session.refresh_token)]);
+    [dev.id, sha256Hex(refreshToken)]);
   await db.query('UPDATE public.users SET last_login_at = now() WHERE id = $1', [user.id]);
-  return {
-    user: publicUser(user), deviceId: dev.id,
-    accessToken: session.access_token, refreshToken: session.refresh_token,
-  };
+  return dev.id;
 }
 
 export function publicUser(u) {
@@ -209,7 +245,13 @@ export async function authenticate(db, cfg, accessToken) {
   if (!accessToken) throw unauthorized();
   let payload = null;
   let userId = null;
-  if (cfg.supabaseJwtSecret) {
+  // App (handoff) tokens FIRST: HS256 over our own authSecret, tagged
+  // ronin:'handoff'. A GoTrue token simply fails this HMAC and falls
+  // through to the GoTrue path below, untouched.
+  const appPayload = cfg.authSecret ? verifyHs256(accessToken, cfg.authSecret) : null;
+  if (appPayload?.ronin === 'handoff') {
+    payload = appPayload;
+  } else if (cfg.supabaseJwtSecret) {
     payload = verifyHs256(accessToken, cfg.supabaseJwtSecret);
     if (!payload) throw unauthorized('invalid_token', 'Invalid access token.');
   } else {
@@ -242,7 +284,7 @@ export async function refreshSession(db, cfg, refreshToken) {
   const hash = sha256Hex(refreshToken);
   const reg = await db.one(
     `SELECT t.state, t.device_id, d.revoked_at AS device_revoked,
-            d.user_id, d.auth_session_id
+            d.user_id, d.auth_session_id, d.kind
      FROM public.device_refresh_tokens t
      JOIN public.devices d ON d.id = t.device_id
      WHERE t.token_hash = $1`,
@@ -259,6 +301,25 @@ export async function refreshSession(db, cfg, refreshToken) {
   }
   const user = await db.one('SELECT * FROM public.users WHERE id = $1', [reg.user_id]);
   if (!user || !user.is_active) throw unauthorized('account_disabled', 'Account disabled or gone.');
+
+  if (reg.kind === 'handoff') {
+    // App sessions rotate LOCALLY (GoTrue knows nothing about them): the
+    // old token row is marked 'rotated' — so the reuse detection above
+    // still fires if it is ever presented again — and a fresh pair is
+    // minted under the same stable session id.
+    await db.query(
+      "UPDATE public.device_refresh_tokens SET state = 'rotated', rotated_at = now() WHERE token_hash = $1", [hash]);
+    const newRefreshToken = crypto.randomBytes(32).toString('base64url');
+    await db.query(
+      'INSERT INTO public.device_refresh_tokens (device_id, token_hash) VALUES ($1,$2)',
+      [reg.device_id, sha256Hex(newRefreshToken)]);
+    await db.query('UPDATE public.devices SET last_seen_at = now() WHERE id = $1', [reg.device_id]);
+    return {
+      user: publicUser(user), deviceId: reg.device_id,
+      accessToken: signAppAccessToken(cfg, { userId: reg.user_id, sessionId: reg.auth_session_id }),
+      refreshToken: newRefreshToken,
+    };
+  }
 
   const { status, json } = await gotrue(cfg, '/token?grant_type=refresh_token', {
     method: 'POST', body: { refresh_token: refreshToken },
@@ -283,6 +344,58 @@ export async function refreshSession(db, cfg, refreshToken) {
   return {
     user: publicUser(user), deviceId: reg.device_id,
     accessToken: json.access_token, refreshToken: json.refresh_token,
+  };
+}
+
+// ── Handoff return codes (desktop app ← web panel login) ────────────────────
+// The signed-in panel user asks for a code; the desktop app exchanges it
+// once for a full app session. Codes are stored only as the SHA-256 of the
+// normalized form (uppercase, dashes/spaces stripped) and live 10 minutes.
+const HANDOFF_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O/1/I/L
+const HANDOFF_TTL_MS = minutes(10);
+
+export function normalizeHandoffCode(code) {
+  return String(code ?? '').toUpperCase().replace(/[-\s]/g, '');
+}
+
+export async function issueHandoffCode(db, userId) {
+  // A fresh code supersedes every earlier unconsumed one for this user.
+  await db.query(
+    'UPDATE public.handoff_codes SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL',
+    [userId]);
+  const seg = () => Array.from({ length: 4 }, () => HANDOFF_ALPHABET[crypto.randomInt(HANDOFF_ALPHABET.length)]).join('');
+  const code = `RNC-${seg()}-${seg()}`;
+  await db.query(
+    'INSERT INTO public.handoff_codes (user_id, code_hash, expires_at) VALUES ($1,$2,$3)',
+    [userId, sha256Hex(normalizeHandoffCode(code)), new Date(Date.now() + HANDOFF_TTL_MS)]);
+  return { code, expiresInSec: Math.floor(HANDOFF_TTL_MS / 1000) };
+}
+
+export async function exchangeHandoffCode(db, cfg, { code, deviceName = null }) {
+  const hash = sha256Hex(normalizeHandoffCode(code));
+  const row = await db.one(
+    'SELECT * FROM public.handoff_codes WHERE code_hash = $1 ORDER BY created_at DESC LIMIT 1', [hash]);
+  if (!row) throw badRequest('invalid_code', 'This return code is not recognized.');
+  if (row.consumed_at) throw badRequest('code_used', 'This return code was already used.');
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    throw badRequest('code_expired', 'This return code has expired. Ask for a new one.');
+  }
+  // ATOMIC consume: exactly one exchange can win, even under a race.
+  const consumed = await db.one(
+    'UPDATE public.handoff_codes SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL RETURNING id',
+    [row.id]);
+  if (!consumed) throw badRequest('code_used', 'This return code was already used.');
+  const user = await db.one('SELECT * FROM public.users WHERE id = $1', [row.user_id]);
+  if (!user || !user.is_active) throw forbidden('account_disabled', 'This account is disabled.');
+  const sessionId = crypto.randomUUID();
+  const refreshToken = crypto.randomBytes(32).toString('base64url');
+  const deviceId = await registerDevice(db, cfg, {
+    user, sessionId, deviceName, kind: 'handoff', refreshToken,
+  });
+  return {
+    user: publicUser(user), deviceId,
+    accessToken: signAppAccessToken(cfg, { userId: user.id, sessionId }),
+    refreshToken,
   };
 }
 

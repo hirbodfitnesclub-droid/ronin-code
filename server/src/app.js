@@ -65,6 +65,33 @@ export function createUserApp(db, cfg, sms) {
     });
   });
 
+  // ── Handoff return codes (web panel → desktop app) ──────────────────────
+  // A signed-in user mints a one-time code in the panel; the desktop app
+  // exchanges it for a full app session (see auth.js for why these are our
+  // own sessions, not GoTrue's).
+  router.post('/api/auth/handoff', async (req, res) => {
+    const { user } = await requireUser(req);
+    const out = await auth.issueHandoffCode(db, user.id);
+    sendJson(res, 200, { code: out.code, expiresInSec: out.expiresInSec });
+  });
+
+  router.post('/api/auth/handoff/exchange', async (req, res) => {
+    // Public endpoint — brute-force surface, so it is rate-limited per IP
+    // (20/hour) before any code lookup happens.
+    await requireRateLimit(db, `handoff:ex:${clientIp(req)}`, 20, 60 * 60 * 1000, 'handoff_rate_limited');
+    const body = await readJson(req);
+    if (!body.code) throw badRequest('invalid_code', 'code is required.');
+    const out = await auth.exchangeHandoffCode(db, cfg, {
+      code: String(body.code),
+      deviceName: body.deviceName ? String(body.deviceName).slice(0, 80) : null,
+    });
+    sendJson(res, 200, {
+      accessToken: out.accessToken, refreshToken: out.refreshToken,
+      accessExpiresInSec: Math.floor(auth.ACCESS_TTL_MS / 1000),
+      user: out.user, deviceId: out.deviceId,
+    });
+  });
+
   router.post('/api/auth/refresh', async (req, res) => {
     const body = await readJson(req);
     const out = await auth.refreshSession(db, cfg, body.refreshToken);
