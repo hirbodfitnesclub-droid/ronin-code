@@ -28,13 +28,14 @@ function freePort() {
 
 /** Fake OpenAI-compatible upstream: canned usage, call counter, optional failure. */
 export function startFakeUpstream({ promptTokens = 100, completionTokens = 50 } = {}) {
-  const state = { calls: 0, failNext: false, lastAuth: null, delayMs: 0 };
+  const state = { calls: 0, failNext: false, lastAuth: null, delayMs: 0, lastBody: null };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => (raw += c));
     req.on('end', async () => {
       state.calls++;
       state.lastAuth = req.headers.authorization;
+      try { state.lastBody = JSON.parse(raw || '{}'); } catch { state.lastBody = null; }
       if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
       if (state.failNext) {
         state.failNext = false;

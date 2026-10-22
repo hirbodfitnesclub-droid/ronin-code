@@ -5,17 +5,25 @@
  * Defaults are seeded from env on first read.
  */
 
-const DEFAULT_MODELS = [
-  { model: 'deepseek-v4.1-flash', multiplier: 0.1 },
-  { model: 'gpt-4o-mini', multiplier: 0.5 },
-  { model: 'gpt-4o', multiplier: 2 },
-  { model: 'claude-sonnet-4-5', multiplier: 3 },
-];
+import { CATALOG } from './catalog.js';
 
+// The model table is built from the single-source catalog (44 models):
+// multiplier = catalog coeff; fastMultiplier only where the catalog carries
+// a Fast coefficient (GPT family). Admins can still edit the table at runtime.
+const DEFAULT_MODELS = CATALOG.map((m) => ({
+  model: m.id,
+  multiplier: m.coeff,
+  ...(m.fastCoeff !== null && m.fastCoeff !== undefined ? { fastMultiplier: m.fastCoeff } : {}),
+  enabled: true,
+}));
+
+// Prices are FINAL Toman amounts (×10 = Rials). The USD value only derives
+// the token amount (usd × tokensPerUsd); it is never exposed to users.
 const DEFAULT_PACKS = [
-  { id: 'pack-1', title: 'بسته ۱ دلاری', usd: 1, priceRials: 0, validityDays: null, badge: null },
-  { id: 'pack-5', title: 'بسته ۵ دلاری', usd: 5, priceRials: 0, validityDays: null, badge: 'پیشنهاد ما' },
-  { id: 'pack-20', title: 'بسته ۲۰ دلاری', usd: 20, priceRials: null, validityDays: null, badge: null },
+  { id: 'pack-1', title: 'بسته ۱ دلاری', usd: 1, priceRials: 2800000, validityDays: null, badge: null },
+  { id: 'pack-2-5', title: 'بسته ۲٫۵ دلاری', usd: 2.5, priceRials: 7000000, validityDays: null, badge: null },
+  { id: 'pack-5', title: 'بسته ۵ دلاری', usd: 5, priceRials: 14000000, validityDays: null, badge: 'پیشنهاد ما' },
+  { id: 'pack-20', title: 'بسته ۲۰ دلاری', usd: 20, priceRials: 56000000, validityDays: null, badge: null },
 ];
 
 export async function getSetting(db, cfg, key) {
@@ -58,16 +66,21 @@ export async function getCard(db, cfg) {
   return getSetting(db, cfg, 'card');
 }
 
-/** Per-model multiplier table — server-side only; the client only ever displays it. */
-export async function getMultiplier(db, cfg, model) {
+/** Per-model multiplier table — server-side only; the client only ever displays it.
+ *  With { fast: true } the entry's fastMultiplier wins when it has one. */
+export async function getMultiplier(db, cfg, model, { fast = false } = {}) {
   const models = await getSetting(db, cfg, 'models');
   const hit = models.find((m) => m.model === model);
-  if (hit) return Number(hit.multiplier);
+  if (hit) {
+    if (fast && hit.fastMultiplier !== undefined && hit.fastMultiplier !== null) return Number(hit.fastMultiplier);
+    return Number(hit.multiplier);
+  }
   const tokenConfig = await getSetting(db, cfg, 'token_config');
   return Number(tokenConfig.defaultMultiplier ?? 1);
 }
 
-/** Raw models-table entry for a model (or null) — carries `enabled` (admin toggle). */
+/** Raw models-table entry for a model (or null) — carries `enabled` (admin toggle)
+ *  and `fastMultiplier` when the model has a Fast coefficient. */
 export async function getModelEntry(db, cfg, model) {
   const models = await getSetting(db, cfg, 'models');
   return models.find((m) => m.model === model) ?? null;

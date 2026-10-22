@@ -61,7 +61,13 @@ export async function handleChatCompletions(db, cfg, req, res, user) {
     if (entry && entry.enabled === false) {
       throw new HttpError(403, 'model_disabled', `Model ${body.model} is disabled by the admin.`);
     }
-    const multiplier = await getMultiplier(db, cfg, body.model);
+    // Fast mode: header `x-ronin-fast: 1|true` or body flag `ronin_fast: true`.
+    // The body flag is a Ronin control field — it is stripped before the
+    // request is forwarded upstream and only affects the multiplier.
+    const fast = ['1', 'true'].includes(String(req.headers['x-ronin-fast'] ?? '').toLowerCase())
+      || body.ronin_fast === true;
+    delete body.ronin_fast;
+    const multiplier = await getMultiplier(db, cfg, body.model, { fast });
     const maxCompletion = Number(body.max_tokens ?? body.max_completion_tokens ?? 1024);
     const reservedTokens = Math.max(1, Math.ceil((estimatePromptTokens(body) + maxCompletion) * multiplier));
 

@@ -93,7 +93,7 @@ export function loadConfig(overrides = {}) {
       holder: env.SHOP_CARD_HOLDER || '',
       bank: env.SHOP_CARD_BANK || '',
     },
-    tokensPerUsd: int(env.TOKENS_PER_USD, 5_000_000),
+    tokensPerUsd: int(env.TOKENS_PER_USD, 20_000_000),
     upstreamBaseUrl: (env.UPSTREAM_BASE_URL || '').replace(/\/$/, ''),
     upstreamApiKey: env.UPSTREAM_API_KEY || '',
     maxDevices: int(env.MAX_DEVICES, 2),

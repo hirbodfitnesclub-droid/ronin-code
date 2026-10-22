@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { startStack, req, loginUser, grant } from './helpers.mjs';
 
 let stack, user;
-const MODEL = 'gpt-4o-mini'; // multiplier 0.5 in the default table
+const MODEL = 'gpt-5.6-luna'; // catalog model with coeff 0.5 in the default (catalog-seeded) table
 // Fake upstream usage: 100 prompt + 50 completion → cost = ceil(150 × 0.5) = 75
 
 before(async () => {
@@ -90,6 +90,36 @@ test('concurrent reserves can never overdraw the balance', async () => {
   // Each success settles ceil((100+50) × 1) = 150 with the unknown-model default multiplier 1.
   assert.equal(credits.json.balanceTokens, 25_000 - okCount * 150);
   assert.equal(credits.json.spendableTokens, credits.json.balanceTokens); // no dangling holds
+});
+
+test('fast multiplier: header and body flags charge fastMultiplier; body flag never reaches upstream', async () => {
+  const { getModels, setSetting } = await import('../src/settings.js');
+  const models = await getModels(stack.db, stack.cfg);
+  await setSetting(stack.db, 'models', [
+    ...models,
+    { model: 'test-fast', multiplier: 2, fastMultiplier: 5, enabled: true },
+  ]);
+  await grant(stack, user.user.id, 5000);
+  const balance = async () => (await req(stack.base, '/api/credits', { token: user.accessToken })).json.balanceTokens;
+  const body = { model: 'test-fast', max_tokens: 10, messages: [{ role: 'user', content: 'hello' }] };
+  // Fake upstream usage is 150 tokens total: ×2 = 300, ×5 (fast) = 750.
+
+  let before = await balance();
+  let r = await chat(user.accessToken, body);
+  assert.equal(r.status, 200);
+  assert.equal(before - (await balance()), 300, 'no flag → base multiplier');
+
+  before = await balance();
+  r = await chat(user.accessToken, body, { 'x-ronin-fast': '1' });
+  assert.equal(r.status, 200);
+  assert.equal(before - (await balance()), 750, 'header flag → fastMultiplier');
+
+  before = await balance();
+  r = await chat(user.accessToken, { ...body, ronin_fast: true });
+  assert.equal(r.status, 200);
+  assert.equal(before - (await balance()), 750, 'body flag → fastMultiplier');
+  assert.equal(stack.upstream.state.lastBody.ronin_fast, undefined, 'ronin_fast must be stripped before forwarding');
+  assert.equal(stack.upstream.state.lastBody.model, 'test-fast');
 });
 
 test('unauthenticated completion is rejected', async () => {

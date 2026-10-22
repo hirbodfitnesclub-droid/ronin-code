@@ -4,10 +4,12 @@ import { createRouter, withErrorHandling, sendJson, readJson, readBody, bearer, 
 import { normalizePhone, badRequest, forbidden, unauthorized, HttpError, timingSafeEqualStr } from './util.js';
 import { isAdminPhone } from './util.js';
 import * as auth from './auth.js';
+import { CATALOG } from './catalog.js';
 import { getPacks, getCard, getModels } from './settings.js';
 import { ledgerBalance, spendableTokens, userLedger } from './ledger.js';
 import { createOrder, userOrders, publicOrder } from './orders.js';
 import { handleChatCompletions } from './proxy.js';
+import { requireRateLimit } from './ratelimit.js';
 import { createStorage } from './storage.js';
 import { parseMultipart } from './upload.js';
 
@@ -140,12 +142,35 @@ export function createUserApp(db, cfg, sms) {
 
   router.get('/api/packs', async (req, res) => {
     await requireUser(req);
-    sendJson(res, 200, { packs: await getPacks(db, cfg), card: await getCard(db, cfg) });
+    // RATE AUDIT: the pack's `usd` value (and anything it implies about the
+    // exchange rate) is server-only — the user API exposes final prices only.
+    const packs = (await getPacks(db, cfg)).map((p) => ({
+      id: p.id, title: p.title, tokens: p.tokens, priceRials: p.priceRials,
+      validityDays: p.validityDays ?? null, badge: p.badge ?? null,
+    }));
+    sendJson(res, 200, { packs, card: await getCard(db, cfg) });
   });
 
   router.get('/api/models', async (req, res) => {
     await requireUser(req);
-    sendJson(res, 200, { models: await getModels(db, cfg) });
+    // Merge the settings-table entries (multiplier/enabled — admin-editable)
+    // with the static catalog metadata (display name, family, context…).
+    const byId = new Map(CATALOG.map((m) => [m.id, m]));
+    const models = (await getModels(db, cfg)).map((e) => {
+      const meta = byId.get(e.model);
+      return {
+        id: e.model,
+        name: meta?.name ?? e.model,
+        family: meta?.family ?? 'Other',
+        coeff: Number(e.multiplier),
+        fastCoeff: e.fastMultiplier ?? null,
+        context: meta?.context ?? null,
+        inputs: meta?.inputs ?? [],
+        efforts: meta?.efforts ?? [],
+        enabled: e.enabled !== false,
+      };
+    });
+    sendJson(res, 200, { models });
   });
 
   // Card-to-card claim = ONE receipt image (multipart/form-data):
