@@ -147,10 +147,8 @@ export class LiveApiClient implements PanelApi {
   /* CLAIMS ADAPTER — claims live on /api/orders, there is NO /api/claims route.
      Create: POST /api/orders as multipart/form-data (text field `packId` +
      file part `receipt`, image/* only, <= 5 MB). List: GET /api/orders.
-     NOTE: this branch's local server predates the orders rework (its
-     POST /api/orders still expects the old JSON form), so the factory keeps
-     VITE_CLAIMS_ADAPTER='mock' as the default locally; 'live' here is correct
-     against the merged-forward backend (supabase-migration @ 711204e).
+     The factory routes claims here by default (VITE_CLAIMS_ADAPTER unset or
+     'live'); 'mock' is only for offline UI work.
      Purchases must use listClaims() — never /api/credits' embedded orders. */
   async listClaims(): Promise<Claim[]> {
     const r = await this.get<{ orders: OrderRow[] }>('/api/orders');

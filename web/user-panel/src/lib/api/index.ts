@@ -7,10 +7,9 @@ export * from './errors';
 
 /* Factory — ONE PanelApi for the whole app.
    VITE_API_MODE='mock' selects the full MockApiClient. Otherwise the live
-   client is used, EXCEPT claims: VITE_CLAIMS_ADAPTER ('mock' default |
-   'live') routes listClaims/createClaim. Default stays 'mock' because this
-   branch's local server predates the /api/orders receipt rework; 'live' is
-   correct against the merged-forward backend. */
+   client is used, including claims: VITE_CLAIMS_ADAPTER routes
+   listClaims/createClaim and defaults to 'live' (set it to 'mock' only for
+   offline UI work) — the merged backend serves the receipt /api/orders. */
 class ClaimsAdapter implements PanelApi {
   constructor(
     private live: LiveApiClient,
@@ -36,7 +35,7 @@ class ClaimsAdapter implements PanelApi {
 
 function createApi(): PanelApi {
   if (import.meta.env.VITE_API_MODE === 'mock') return new MockApiClient();
-  const claimsLive = import.meta.env.VITE_CLAIMS_ADAPTER === 'live';
+  const claimsLive = import.meta.env.VITE_CLAIMS_ADAPTER !== 'mock';
   // Mock claims share no session with the live client, so the factory sets
   // claimsLenient on the mock instance used purely as the claims adapter.
   const mock = new MockApiClient();

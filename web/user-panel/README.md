@@ -11,7 +11,7 @@ npm install
 npm run dev        # http://127.0.0.1:5174 — proxies /api + /hooks to 127.0.0.1:7443
 ```
 
-Env: `VITE_API_MODE=mock` for the full mock client; `VITE_CLAIMS_ADAPTER=live`
-to route claims (POST/GET /api/orders) live instead of mock (default mock —
-this branch's local server predates the orders receipt rework);
-`VITE_API_BASE_URL` to point at a non-proxied API origin. Mock OTP: `123456`.
+Env: `VITE_API_MODE=mock` for the full mock client; claims route live
+(POST/GET /api/orders) by default — `VITE_CLAIMS_ADAPTER=mock` forces the
+mock claims adapter for offline UI work; `VITE_API_BASE_URL` to point at a
+non-proxied API origin. Mock OTP: `123456`.
