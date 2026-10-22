@@ -196,7 +196,11 @@ export async function loginWithOtp(db, cfg, { phone, code, deviceName = null, na
 }
 
 export function publicUser(u) {
-  return { id: u.id, phone: u.phone, name: u.name, isActive: Boolean(u.is_active), createdAt: ms(u.created_at) };
+  return {
+    id: u.id, phone: u.phone, name: u.name, isActive: Boolean(u.is_active), createdAt: ms(u.created_at),
+    onboarded: Boolean(u.onboarded), acquisitionSource: u.acquisition_source ?? null,
+    onboardingGoal: u.onboarding_goal ?? null,
+  };
 }
 
 // ── Authenticate an access token (user API only) ────────────────────────────

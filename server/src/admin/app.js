@@ -131,7 +131,7 @@ export function createAdminApp(db, cfg, sms) {
     const orderRows = await db.many('SELECT * FROM public.orders WHERE user_id = $1 ORDER BY id DESC LIMIT 50', [user.id]);
     const dupCounts = await duplicateFlags(orderRows);
     sendJson(res, 200, {
-      user: { id: user.id, phone: user.phone, name: user.name, isActive: Boolean(user.is_active), createdAt: ms(user.created_at), lastLoginAt: ms(user.last_login_at) },
+      user: { id: user.id, phone: user.phone, name: user.name, isActive: Boolean(user.is_active), createdAt: ms(user.created_at), lastLoginAt: ms(user.last_login_at), onboarded: Boolean(user.onboarded), acquisitionSource: user.acquisition_source ?? null, onboardingGoal: user.onboarding_goal ?? null },
       balanceTokens: await ledgerBalance(db, user.id),
       ledger: await userLedger(db, user.id, 100),
       orders: orderRows.map((o) => publicOrderAdmin(o, dupCounts)),

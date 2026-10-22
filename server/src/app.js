@@ -105,6 +105,30 @@ export function createUserApp(db, cfg, sms) {
     });
   });
 
+  // First-login onboarding (one short screen): name + acquisition source
+  // (required) and an optional goal. One atomic UPDATE flips `onboarded`;
+  // resubmitting is a harmless overwrite.
+  const ACQUISITION_SOURCES = ['instagram', 'telegram', 'friend', 'google', 'youtube_aparat', 'other'];
+  const ONBOARDING_GOALS = ['personal', 'freelance', 'business', 'learning', 'other'];
+  router.post('/api/me/onboarding', async (req, res) => {
+    const { user } = await requireUser(req);
+    const body = await readJson(req);
+    const name = String(body.name ?? '').trim().slice(0, 80);
+    if (name.length < 2) throw badRequest('name_required', 'Your name is required.');
+    const source = String(body.acquisitionSource ?? '');
+    if (!ACQUISITION_SOURCES.includes(source)) throw badRequest('invalid_source', 'Choose how you heard about us.');
+    let goal = null;
+    if (body.onboardingGoal !== undefined && body.onboardingGoal !== null && body.onboardingGoal !== '') {
+      goal = String(body.onboardingGoal);
+      if (!ONBOARDING_GOALS.includes(goal)) throw badRequest('invalid_goal', 'Unknown onboarding goal.');
+    }
+    const row = await db.one(
+      `UPDATE public.users SET name = $2, acquisition_source = $3, onboarding_goal = $4, onboarded = true
+       WHERE id = $1 RETURNING *`,
+      [user.id, name, source, goal]);
+    sendJson(res, 200, { user: auth.publicUser(row) });
+  });
+
   // Daily revalidation: the desktop app calls this on every launch and at
   // least once a day. All truth is server-side (server clock, server
   // ledger); the device registry decides deviceAuthorized.
