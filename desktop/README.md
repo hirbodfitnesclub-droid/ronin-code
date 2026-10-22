@@ -84,6 +84,55 @@ This scaffold was authored on Linux, where there is no Rust toolchain in the
 dev VM — the Rust code and config are written to the Tauri v2 contracts but
 the first compile happens in CI.
 
+## Account login & credential storage
+
+Ronin Code requires a Ronin account: the host gates every agent-running
+route (`/api/turn`, idea build, plan execution, publish/export) behind a
+valid session — there is no account-free mode. The shell itself does no
+auth work; the Node host owns the whole flow (`host/src/auth.js`), and
+the window just renders what the host reports via `GET /api/auth/state`
+and `GET /api/status`.
+
+**Login flow (browser panel + manual return code):**
+
+1. The app asks the host to open the web panel
+   (`POST /api/auth/open-panel`); the host opens
+   `<panelUrl>?from=app` in the system browser.
+2. In the panel the user signs in with their Iranian mobile number +
+   SMS OTP (Kavenegar, handled server-side).
+3. The panel shows a one-time **return code**. The user pastes it into
+   the app, which calls `POST /api/auth/exchange-code`; the host
+   exchanges it at the server (`POST /api/auth/handoff/exchange` with
+   this device's name) and persists the returned session.
+4. **Fallback:** the app can also run the OTP flow in-app
+   (`POST /api/auth/otp/request` → `POST /api/auth/otp/verify`) with no
+   browser involved.
+5. The host revalidates the account with the server on boot, every
+   6 hours, and before subscription turns (daily-revalidation rule):
+   access tokens refresh automatically (rotated refresh tokens; reuse
+   of a rotated token revokes the device server-side and logs the app
+   out), and a server verdict of disabled / device-not-authorized
+   locks subscription features while keeping the shell reachable for
+   re-login.
+
+**Credential storage interface:** the host persists the session through
+a small store interface — `load() / save(session) / clear()` over
+`{ accessToken, refreshToken, deviceId, user, serverUrl, savedAt }`.
+Today's implementation (`CredentialStore` in `host/src/auth.js`) is a
+JSON file at `~/.ronin-code/credentials.json` with mode `0600`. Before
+release the Tauri shell should swap that implementation for the OS
+credential store (Windows Credential Manager) behind the **same
+interface**, so session tokens never live in `config.json`,
+`localStorage`, or any GUI-readable file. Nothing in the host changes
+when the store is swapped.
+
+**Follow-up — deep-link return:** a `ronin://` deep link that returns
+the user from the panel straight into the app (instead of the manual
+code) requires the `tauri-plugin-deep-link` plugin in
+`src-tauri/Cargo.toml`, which is deliberately **not** added yet. Until
+it lands, the manual return code above is the supported path, with the
+in-app OTP flow as fallback.
+
 ## Must be replaced before release
 
 1. **Updater endpoint** — `plugins.updater.endpoints` in
