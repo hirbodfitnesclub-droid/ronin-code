@@ -23,6 +23,20 @@ export async function applyLocalPrereqs(client) {
   await client.query(fs.readFileSync(PREREQS_FILE, 'utf8'));
 }
 
+/**
+ * LOCAL ONLY: after GoTrue has created its auth schema, let the local
+ * service_role login hard-kill Auth sessions (DELETE on auth.sessions /
+ * auth.refresh_tokens) — the enforcement hammer behind device revocation.
+ * On Supabase Cloud the server connects as the postgres role and needs no
+ * such grant. Best-effort: if it fails, our device registry still governs
+ * every API boundary.
+ */
+export async function applyLocalAuthGrants(client) {
+  try {
+    await client.query('GRANT DELETE ON auth.sessions, auth.refresh_tokens TO service_role');
+  } catch { /* see note above */ }
+}
+
 export async function applyMigrations(client) {
   await client.query(`CREATE TABLE IF NOT EXISTS public.ronin_migrations (
     filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);

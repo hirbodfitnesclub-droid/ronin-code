@@ -1,6 +1,7 @@
 import http from 'node:http';
-import { createRouter, withErrorHandling, sendJson, readJson, bearer, clientIp } from './http.js';
-import { normalizePhone, badRequest, forbidden, notFound } from './util.js';
+import crypto from 'node:crypto';
+import { createRouter, withErrorHandling, sendJson, readJson, readBody, bearer, clientIp } from './http.js';
+import { normalizePhone, badRequest, forbidden, unauthorized, HttpError, timingSafeEqualStr } from './util.js';
 import { isAdminPhone } from './util.js';
 import * as auth from './auth.js';
 import { getPacks, getCard, getModels } from './settings.js';
@@ -11,13 +12,35 @@ import { handleChatCompletions } from './proxy.js';
 /** User API application (no admin surface here at all — the admin is a separate app). */
 export function createUserApp(db, cfg, sms) {
   const router = createRouter();
-  const requireUser = (req) => auth.authenticate(db, bearer(req));
+  const requireUser = (req) => auth.authenticate(db, cfg, bearer(req));
+
+  // ── Supabase Auth Send SMS Hook ─────────────────────────────────────────
+  // GoTrue generates the OTP, then calls this endpoint (Standard-Webhooks
+  // signed) to deliver it. Kavenegar is not a built-in Supabase SMS
+  // provider, so delivery happens here, through our SMS service.
+  router.post('/hooks/send-sms', async (req, res) => {
+    const raw = (await readBody(req)).toString('utf8');
+    if (!verifyHookSignature(cfg, raw, req.headers)) {
+      throw unauthorized('invalid_signature', 'Invalid webhook signature.');
+    }
+    let payload;
+    try { payload = JSON.parse(raw || '{}'); }
+    catch { throw badRequest('invalid_json', 'Hook body must be JSON.'); }
+    const phoneRaw = payload?.user?.phone;
+    const otp = payload?.sms?.otp;
+    if (!phoneRaw || !otp) throw badRequest('invalid_hook_payload', 'Hook payload needs user.phone and sms.otp.');
+    const phone = normalizePhone(auth.toLocalPhone(phoneRaw));
+    if (!phone) throw badRequest('invalid_hook_phone', 'Hook payload phone is not a valid Iranian mobile.');
+    const out = await sms.sendOtp(phone, String(otp));
+    if (out?.error) throw new HttpError(500, 'sms_delivery_failed', 'SMS delivery failed.');
+    sendJson(res, 200, {});
+  });
 
   router.post('/api/auth/otp/request', async (req, res) => {
     const body = await readJson(req);
     const phone = normalizePhone(body.phone ?? '');
     if (!phone) throw badRequest('invalid_phone', 'Enter a valid Iranian mobile number (09xxxxxxxxx).');
-    await auth.requestOtp(db, cfg, sms, { phone, purpose: 'login', ip: clientIp(req) });
+    await auth.requestOtp(db, cfg, { phone, ip: clientIp(req) });
     sendJson(res, 200, { ok: true });
   });
 
@@ -25,7 +48,7 @@ export function createUserApp(db, cfg, sms) {
     const body = await readJson(req);
     const phone = normalizePhone(body.phone ?? '');
     if (!phone || !body.code) throw badRequest('invalid_input', 'phone and code are required.');
-    const out = auth.loginWithOtp(db, cfg, {
+    const out = await auth.loginWithOtp(db, cfg, {
       phone, code: String(body.code),
       deviceName: body.deviceName ? String(body.deviceName).slice(0, 80) : null,
       name: body.name ? String(body.name).slice(0, 80) : null,
@@ -39,78 +62,89 @@ export function createUserApp(db, cfg, sms) {
 
   router.post('/api/auth/refresh', async (req, res) => {
     const body = await readJson(req);
-    const out = auth.refreshSession(db, body.refreshToken);
-    sendJson(res, 200, { accessToken: out.accessToken, refreshToken: out.refreshToken, user: out.user });
+    const out = await auth.refreshSession(db, cfg, body.refreshToken);
+    sendJson(res, 200, {
+      accessToken: out.accessToken, refreshToken: out.refreshToken,
+      user: out.user, deviceId: out.deviceId,
+    });
   });
 
   router.post('/api/auth/logout', async (req, res) => {
-    const { user, familyId } = requireUser(req);
-    auth.revokeFamily(db, familyId, 'logout');
-    void user;
+    const { sessionId } = await requireUser(req);
+    await auth.revokeSession(db, sessionId);
     sendJson(res, 200, { ok: true });
   });
 
   router.post('/api/auth/logout-all', async (req, res) => {
-    const { user } = requireUser(req);
-    auth.logoutAll(db, user.id);
+    const { user } = await requireUser(req);
+    await auth.logoutAll(db, user.id);
     sendJson(res, 200, { ok: true });
   });
 
   router.get('/api/devices', async (req, res) => {
-    const { user } = requireUser(req);
-    sendJson(res, 200, { devices: auth.listDevices(db, user.id) });
+    const { user } = await requireUser(req);
+    sendJson(res, 200, { devices: await auth.listDevices(db, user.id) });
   });
 
   router.delete('/api/devices/:id', async (req, res, { params }) => {
-    const { user } = requireUser(req);
-    auth.revokeDevice(db, user.id, Number(params.id), 'remote_logout');
+    const { user } = await requireUser(req);
+    await auth.revokeDevice(db, user.id, params.id, 'remote_logout');
     sendJson(res, 200, { ok: true });
   });
 
   router.get('/api/me', async (req, res) => {
-    const { user } = requireUser(req);
+    const { user } = await requireUser(req);
     sendJson(res, 200, {
       user: auth.publicUser(user),
-      balanceTokens: ledgerBalance(db, user.id),
-      spendableTokens: spendableTokens(db, user.id),
+      balanceTokens: await ledgerBalance(db, user.id),
+      spendableTokens: await spendableTokens(db, user.id),
       isAdminPhone: isAdminPhone(cfg, user.phone), // informational only — admin access lives in the separate admin app
     });
   });
 
+  // Daily revalidation: the desktop app calls this on every launch and at
+  // least once a day. All truth is server-side (server clock, server
+  // ledger); the device registry decides deviceAuthorized.
+  router.get('/api/account-status', async (req, res, { query }) => {
+    const { user, deviceId } = await requireUser(req);
+    const status = await auth.accountStatus(db, user.id, query.get('deviceId') || deviceId);
+    sendJson(res, 200, { userId: user.id, ...status });
+  });
+
   router.get('/api/packs', async (req, res) => {
-    requireUser(req);
-    sendJson(res, 200, { packs: getPacks(db, cfg), card: getCard(db, cfg) });
+    await requireUser(req);
+    sendJson(res, 200, { packs: await getPacks(db, cfg), card: await getCard(db, cfg) });
   });
 
   router.get('/api/models', async (req, res) => {
-    requireUser(req);
-    sendJson(res, 200, { models: getModels(db, cfg) });
+    await requireUser(req);
+    sendJson(res, 200, { models: await getModels(db, cfg) });
   });
 
   router.post('/api/orders', async (req, res) => {
-    const { user } = requireUser(req);
+    const { user } = await requireUser(req);
     const body = await readJson(req);
-    const order = createOrder(db, cfg, user, body);
+    const order = await createOrder(db, cfg, user, body);
     sendJson(res, 201, { order: publicOrder(order) });
   });
 
   router.get('/api/orders', async (req, res) => {
-    const { user } = requireUser(req);
-    sendJson(res, 200, { orders: userOrders(db, user.id).map(publicOrder) });
+    const { user } = await requireUser(req);
+    sendJson(res, 200, { orders: (await userOrders(db, user.id)).map(publicOrder) });
   });
 
   router.get('/api/credits', async (req, res) => {
-    const { user } = requireUser(req);
+    const { user } = await requireUser(req);
     sendJson(res, 200, {
-      balanceTokens: ledgerBalance(db, user.id),
-      spendableTokens: spendableTokens(db, user.id),
-      ledger: userLedger(db, user.id),
-      orders: userOrders(db, user.id).map(publicOrder),
+      balanceTokens: await ledgerBalance(db, user.id),
+      spendableTokens: await spendableTokens(db, user.id),
+      ledger: await userLedger(db, user.id),
+      orders: (await userOrders(db, user.id)).map(publicOrder),
     });
   });
 
   router.post('/v1/chat/completions', async (req, res) => {
-    const { user } = requireUser(req);
+    const { user } = await requireUser(req);
     if (!user.is_active) throw forbidden('account_disabled', 'Account disabled.');
     await handleChatCompletions(db, cfg, req, res, user);
   });
@@ -119,4 +153,25 @@ export function createUserApp(db, cfg, sms) {
 
   const handler = withErrorHandling((req, res) => router.handle(req, res, {}));
   return http.createServer((req, res) => { void handler(req, res, {}); });
+}
+
+/**
+ * Standard Webhooks signature check for the Send SMS Hook.
+ * Configured secret format (same string given to GoTrue): `v1,whsec_<base64>`.
+ * When no secret is configured the endpoint is unauthenticated — local dev
+ * only; startup logs a warning in that case.
+ */
+export function verifyHookSignature(cfg, rawBody, headers) {
+  const secret = cfg.authHookSecret;
+  if (!secret) return true;
+  const id = headers['webhook-id'];
+  const ts = headers['webhook-timestamp'];
+  const sigHeader = headers['webhook-signature'];
+  if (!id || !ts || !sigHeader) return false;
+  let b64 = secret.startsWith('v1,') ? secret.slice(3) : secret;
+  if (b64.startsWith('whsec_')) b64 = b64.slice(6);
+  let key;
+  try { key = Buffer.from(b64, 'base64'); } catch { return false; }
+  const expected = `v1,${crypto.createHmac('sha256', key).update(`${id}.${ts}.${rawBody}`).digest('base64')}`;
+  return String(sigHeader).split(' ').some((s) => timingSafeEqualStr(s, expected));
 }
