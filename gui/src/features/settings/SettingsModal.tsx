@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Provider, type Status } from '../../lib/api';
+import RouterSection from './RouterSection';
 import { useLang, type Lang } from '../../lib/i18n';
 
 interface Props {
@@ -11,7 +12,7 @@ interface Props {
 }
 
 export default function SettingsModal({ open, providers, status, onClose, onSaved }: Props) {
-  const { t, fmtNum } = useLang();
+  const { t } = useLang();
   const [provider, setProvider] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -224,82 +225,18 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
           <span className="field-hint">{t('settings.modelHint')}</span>
         </label>
 
-        {/* ---------------- router & failover ---------------- */}
-        <div className="settings-section">
-          <h3>{t('settings.router')}</h3>
-          <span className="field-hint">{t('settings.routerHint')}</span>
-
-          {(selected?.keys ?? []).map((k) => (
-            <div key={k.index} className="key-row">
-              <span className="key-stats" dir="ltr">{k.maskedKey}</span>
-              <span className="key-stats">
-                {t('settings.requests', { count: fmtNum(k.requests) })}
-                {k.coolingDown && <span className="cooling"> · {t('settings.cooling')}</span>}
-              </span>
-              <button type="button" className="btn btn--ghost btn--sm" onClick={() => void removeKey(k.index)}>
-                {t('settings.removeKey')}
-              </button>
-            </div>
-          ))}
-
-          {extraKeys.map((v, i) => (
-            <div key={i} className="key-row">
-              <input
-                type="password"
-                dir="ltr"
-                autoComplete="off"
-                spellCheck={false}
-                value={v}
-                onChange={(e) => {
-                  const next = [...extraKeys];
-                  next[i] = e.target.value;
-                  setExtraKeys(next);
-                }}
-                placeholder={t('settings.apiKeyPlaceholder')}
-                aria-label={t('settings.keyN', { n: i + 2 })}
-              />
-              {i === extraKeys.length - 1 && (
-                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setExtraKeys([...extraKeys, ''])}>
-                  {t('settings.addKey')}
-                </button>
-              )}
-            </div>
-          ))}
-
-          <div className="switch-row">
-            <span className="switch-label">{t('settings.failover')}</span>
-            <button
-              type="button"
-              className={`switch ${failoverOn ? 'switch--on' : ''}`}
-              onClick={() => setFailoverOn((v) => !v)}
-              aria-pressed={failoverOn}
-              aria-label={t('settings.failover')}
-            />
-          </div>
-
-          {failoverOn && others.length > 0 && (
-            <label className="field">
-              <span className="field-label">{t('settings.failoverOrder')}</span>
-              <select
-                className="failover-select"
-                value={failoverOrder[0] ?? ''}
-                onChange={(e) => {
-                  const first = e.target.value;
-                  const rest = others.map((p) => p.id).filter((x) => x !== first);
-                  setFailoverOrder(first ? [first, ...rest] : []);
-                }}
-              >
-                <option value="">—</option>
-                {others.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {rtkSaved > 0 && <span className="field-hint">{t('settings.rtkSaved', { chars: fmtNum(rtkSaved) })}</span>}
-        </div>
+        <RouterSection
+          keys={selected?.keys ?? []}
+          extraKeys={extraKeys}
+          onExtraKeysChange={setExtraKeys}
+          failoverOn={failoverOn}
+          onFailoverToggle={() => setFailoverOn((v) => !v)}
+          others={others}
+          failoverOrder={failoverOrder}
+          onFailoverOrderChange={setFailoverOrder}
+          rtkSaved={rtkSaved}
+          onRemoveKey={(index) => removeKey(index)}
+        />
 
         {/* ---------------- safety ---------------- */}
         <div className="settings-section">
