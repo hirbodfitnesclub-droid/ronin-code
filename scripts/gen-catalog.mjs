@@ -15,6 +15,6 @@ const js = `${header}export const CATALOG = ${JSON.stringify(models, null, 2)};\
 fs.writeFileSync(path.join(root, 'server/src/catalog.js'), js);
 fs.writeFileSync(path.join(root, 'host/src/catalog.js'), js);
 
-const ts = `${header}export interface CatalogModel {\n  id: string;\n  name: string;\n  family: string;\n  coeff: number;\n  fastCoeff?: number;\n  context: number;\n  inputs: string[];\n  efforts: string[];\n}\n\nexport const CATALOG: CatalogModel[] = ${JSON.stringify(models, null, 2)};\n`;
+const ts = `${header}export interface CatalogModel {\n  id: string;\n  name: string;\n  family: string;\n  coeff: number;\n  fastCoeff?: number | null;\n  context: number | null;\n  inputs: string[];\n  efforts: string[] | null;\n}\n\nexport const CATALOG: CatalogModel[] = ${JSON.stringify(models, null, 2)};\n`;
 fs.writeFileSync(path.join(root, 'gui/src/lib/catalog.ts'), ts);
 console.log(`catalog: ${models.length} models → server/src/catalog.js, host/src/catalog.js, gui/src/lib/catalog.ts`);
