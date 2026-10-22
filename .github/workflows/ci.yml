@@ -17,7 +17,22 @@ jobs:
         run: npm run install:all
       - name: Host syntax check
         run: node --check host/src/server.js
-      - name: GUI typecheck + build
+      - name: GUI lint
+        run: npm run lint
+      - name: GUI typecheck
+        run: npm run typecheck
+      - name: GUI unit tests (pure helpers — format, diff, i18n)
+        run: npm --prefix gui test
+      - name: GUI build
         run: npm run build
+      - name: Bundle budget (gzipped JS must stay under 300 KB)
+        run: |
+          SIZE=$(gzip -c gui/dist/assets/*.js | wc -c)
+          echo "gzipped JS: $SIZE bytes (budget: 307200)"
+          test "$SIZE" -lt 307200
+      - name: Host unit tests (pure logic)
+        run: npm --prefix host run test:unit
       - name: Host E2E (mock provider — trust layer, router, plan, ideas)
         run: node host/test/e2e.mjs
+      - name: Server tests (auth, ledger, claims, metering)
+        run: npm --prefix server test
