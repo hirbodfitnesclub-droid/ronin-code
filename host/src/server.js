@@ -39,9 +39,14 @@ import { unifiedDiff } from "./diff.js";
 import { projectZipBuffer } from "./publish.js";
 
 import { STARTER_HTML, STARTER_CSS, STARTER_JS } from "./starters.js";
+
 import { testProviderKey, buildAttempts, isFailoverError } from "./router.js";
+
 import { finalizeTurnUsage } from "./cost.js";
-import { resolveApproval, makeGuardExtension, collectSecretValues } from "./guard.js";
+
+import { resolveApproval } from "./guard.js";
+import { getLastTurnDiff } from "./engine.js";
+import { runTurn, isTurnRunning, setTurnRunning, getPendingPlan, setPendingPlan } from "./turns.js";
 
 const PORT = Number(process.env.PORT || 7331);
 
@@ -117,495 +122,6 @@ function safeJoin(base, rel) {
 }
 
 // ---------- provider key test ----------
-
-let turnRunning = false;
-
-let activitySeq = 0;
-
-const nextActivityId = () => `act-${++activitySeq}`;
-
-function emitActivity(kind, ms) {
-  const activityId = nextActivityId();
-  broadcast({ type: "activity_start", activityId, kind });
-  return { activityId, kind, async end() { broadcast({ type: "activity_end", activityId, kind }); } };
-}
-
-async function runActivity(kind, ms) {
-  const a = emitActivity(kind, ms);
-  await sleep(ms);
-  await a.end();
-}
-
-async function runPreviewTurn() {
-  await runActivity("planning", 900);
-  await runActivity("reading", 650);
-  await runActivity("searching", 600);
-  const message =
-    "You're in Preview mode, so I explored your project and planned the work — but I didn't change any files. " +
-    "Add an API key for your provider in Settings to switch to Live mode, and I'll make real edits, run commands, and show you exactly what changed.";
-  for (const chunk of ["You're in Preview mode — ", "add an API key in Settings ", "to switch to Live mode."]) {
-    broadcast({ type: "assistant_delta", text: chunk });
-    await sleep(250);
-  }
-  await runActivity("writing", 750);
-  await runActivity("terminal", 700);
-  await runActivity("editing", 650);
-  await runActivity("reviewing", 800);
-  broadcast({ type: "assistant_message", text: message });
-  broadcast({ type: "changes", files: [] });
-  finalizeTurnUsage({ providerId: config.provider, modelId: currentModel(), apiKey: null, usage: null, promptText: "", replyText: message });
-  broadcast({ type: "turn_done" });
-}
-
-const TOOL_KIND = {
-  read: "reading",
-  write: "writing",
-  edit: "editing",
-  bash: "terminal",
-  powershell: "terminal",
-  grep: "searching",
-  find: "searching",
-  ls: "searching",
-  search: "searching",
-};
-
-// ---------- price table (server-side; GUI never prices anything) ----------
-// USD per 1M tokens. `multiplier` scales consumption (subscription-style
-// accounting, mirrored into cost so expensive models weigh more).
-
-async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, manifest, autoMode, onProgress, state }) {
-  // Embedded engine — actual installed SDK API (v1.3.0, see ENGINE.md).
-  const engine = await import("@earendil-works/pi-coding-agent");
-  const { createAgentSession, SessionManager, SettingsManager, ModelRuntime, DefaultResourceLoader } = engine;
-
-  if (providerId === "custom") {
-    // Register the user's own OpenAI-compatible endpoint with the engine.
-    // The key itself never lands in models.json — it is referenced through
-    // an environment variable that only this host process sets.
-    if (!config.baseUrl) throw new Error("No endpoint URL is configured for the custom provider.");
-    process.env.RONIN_CUSTOM_KEY = apiKey;
-    const modelsDoc = {
-      providers: {
-        custom: {
-          baseUrl: config.baseUrl,
-          api: "openai-completions",
-          apiKey: "$RONIN_CUSTOM_KEY",
-          models: [{ id: modelId, name: modelId, contextWindow: 1048576, maxTokens: 32768 }],
-        },
-      },
-    };
-    fs.writeFileSync(path.join(ENGINE_DIR, "models.json"), JSON.stringify(modelsDoc, null, 2) + "\n", { mode: 0o600 });
-  }
-
-  const modelRuntime = await ModelRuntime.create({
-    authPath: path.join(ENGINE_DIR, "auth.json"),
-    modelsPath: path.join(ENGINE_DIR, "models.json"),
-  });
-  await modelRuntime.setRuntimeApiKey(providerId, apiKey);
-  const model = modelRuntime.getModel(providerId, modelId);
-  if (!model) throw new Error(`Model "${modelId}" is not available for this provider.`);
-
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: true },
-    retry: { enabled: true, maxRetries: 2 },
-  });
-  const sessionManager = SessionManager.create(project, SESSIONS_DIR);
-
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: project,
-    agentDir: ENGINE_DIR,
-    settingsManager,
-    extensionFactories: [
-      { name: "ronin-guard", factory: makeGuardExtension({ project, autoMode, secretValues: collectSecretValues() }) },
-    ],
-  });
-  await resourceLoader.reload();
-
-  const { session } = await createAgentSession({
-    cwd: project,
-    agentDir: ENGINE_DIR,
-    modelRuntime,
-    model,
-    sessionManager,
-    settingsManager,
-    resourceLoader,
-  });
-
-  const toolActivities = new Map(); // toolCallId -> {activityId, kind}
-  const trackedFiles = new Map(); // relPath -> action
-  let thinkingId = null;
-  let thinkingKind = "thinking";
-  let toolCount = 0;
-  let toolEnds = 0;
-  let editedDone = false;
-  let assistantText = "";
-  let providerError = null;
-  const usage = { input: 0, output: 0, costTotal: 0 };
-
-  const endThinking = () => {
-    if (thinkingId) {
-      broadcast({ type: "activity_end", activityId: thinkingId, kind: thinkingKind });
-      thinkingId = null;
-    }
-  };
-
-  const unsubscribe = session.subscribe((event) => {
-    try {
-      if (event.type === "message_update") {
-        const ame = event.assistantMessageEvent || {};
-        if (ame.type === "thinking_start" || ame.type === "thinking_delta") {
-          if (!thinkingId) {
-            thinkingId = nextActivityId();
-            // Reasoning before the first tool call of a turn is the agent
-            // planning the work; later reasoning is plain thinking.
-            thinkingKind = toolCount === 0 ? "planning" : "thinking";
-            broadcast({ type: "activity_start", activityId: thinkingId, kind: thinkingKind });
-          }
-        } else if (ame.type === "thinking_end") {
-          endThinking();
-        } else if (ame.type === "text_delta" && typeof ame.delta === "string") {
-          endThinking();
-          if (state) state.visible = true;
-          assistantText += ame.delta;
-          broadcast({ type: "assistant_delta", text: ame.delta });
-        }
-      } else if (event.type === "message_end") {
-        const u = event.message && event.message.usage;
-        if (u) {
-          usage.input += u.input || 0;
-          usage.output += u.output || 0;
-          usage.costTotal += (u.cost && u.cost.total) || 0;
-        }
-        // The engine reports provider failures as an assistant message with
-        // stopReason "error" instead of throwing — surface it as a throw so
-        // the router can fail over to the next key/provider.
-        if (event.message && event.message.stopReason === "error") {
-          providerError = event.message.errorMessage || "The provider returned an error.";
-        }
-      } else if (event.type === "tool_execution_start") {
-        endThinking();
-        if (state) state.visible = true;
-        toolCount++;
-        let kind = TOOL_KIND[event.toolName] || "reading";
-        // Reading/searching again after an edit is the agent reviewing
-        // its own work — give it its own visual state.
-        if ((kind === "reading" || kind === "searching") && editedDone) kind = "reviewing";
-        const activityId = nextActivityId();
-        toolActivities.set(event.toolCallId, { activityId, kind });
-        broadcast({ type: "activity_start", activityId, kind });
-        if ((event.toolName === "write" || event.toolName === "edit") && event.args) {
-          const p = event.args.path || event.args.file_path || event.args.filePath;
-          if (typeof p === "string") {
-            const rel = path.isAbsolute(p) ? path.relative(project, p) : p;
-            if (rel && !rel.startsWith("..")) trackedFiles.set(rel, event.toolName === "write" ? "created" : "modified");
-          }
-        }
-      } else if (event.type === "tool_execution_end") {
-        if (event.toolName === "write" || event.toolName === "edit") editedDone = true;
-        toolEnds++;
-        if (onProgress) onProgress({ toolEnds });
-        const a = toolActivities.get(event.toolCallId);
-        if (a) {
-          toolActivities.delete(event.toolCallId);
-          broadcast({ type: "activity_end", activityId: a.activityId, kind: a.kind });
-        }
-      }
-    } catch {}
-  });
-
-  try {
-    await session.prompt(prompt);
-    endThinking();
-    for (const a of toolActivities.values()) broadcast({ type: "activity_end", activityId: a.activityId, kind: a.kind });
-    toolActivities.clear();
-    if (providerError) throw new Error(providerError);
-
-    let finalText = assistantText;
-    try {
-      const last = typeof session.getLastAssistantText === "function" ? session.getLastAssistantText() : undefined;
-      if (typeof last === "string" && last.trim()) finalText = last;
-    } catch {}
-
-    let changes = await diffAgainstManifest(project, manifest);
-    if (!changes.length && trackedFiles.size) {
-      changes = [...trackedFiles.entries()].map(([p, action]) => ({ path: p, action }));
-    } else if (trackedFiles.size) {
-      const seen = new Set(changes.map((c) => c.path));
-      for (const [p, action] of trackedFiles) if (!seen.has(p)) changes.push({ path: p, action });
-    }
-    return { finalText: finalText || "Done.", changes, usage, toolCount };
-  } finally {
-    try { unsubscribe(); } catch {}
-    try { session.dispose(); } catch {}
-  }
-}
-
-/** Attempts list for a turn: primary provider keys (rotated), then failover providers. */
-
-let lastTurnDiff = null; // { project, manifest, changes } for the diff view
-
-async function runLiveTurn(prompt, project, manifest, { autoMode, onProgress } = {}) {
-  const auth = loadAuth();
-  const attempts = buildAttempts(auth);
-  if (!attempts.length) throw new Error("No usable API key is available right now.");
-  let lastError = null;
-  for (let i = 0; i < attempts.length; i++) {
-    const a = attempts[i];
-    if (i > 0) broadcast({ type: "provider_switched", provider: a.providerId, model: a.modelId });
-    const state = { visible: false };
-    try {
-      const r = await runLiveAttempt({ prompt, ...a, project, manifest, autoMode, onProgress, state });
-      finalizeTurnUsage({ providerId: a.providerId, modelId: a.modelId, apiKey: a.apiKey, usage: r.usage, promptText: prompt, replyText: r.finalText });
-      broadcast({ type: "assistant_message", text: r.finalText });
-      broadcast({ type: "changes", files: r.changes });
-      lastTurnDiff = { project, manifest, changes: r.changes };
-      broadcast({ type: "turn_done" });
-      return;
-    } catch (e) {
-      lastError = e;
-      const msg = cleanError(e);
-      finalizeTurnUsage({ providerId: a.providerId, modelId: a.modelId, apiKey: a.apiKey, usage: null, promptText: prompt, replyText: "", error: msg });
-      // Fail over only when nothing user-visible happened yet (no streamed
-      // text, no tool ran) and the error looks like a provider problem.
-      if (state.visible || !isFailoverError(msg) || i === attempts.length - 1) throw e;
-      console.error(`Ronin Code: ${a.providerId} failed (${msg}); failing over.`);
-    }
-  }
-  if (lastError) throw lastError;
-}
-
-// ---------- plan mode ----------
-
-let pendingPlan = null; // { id, task, steps: [{title, detail}], project }
-
-const previewSteps = () =>
-  config.language === "fa"
-    ? [
-        { title: "مرور پروژه", detail: "نگاهی به ساختار و فایل‌های فعلی" },
-        { title: "طراحی راه‌حل", detail: "انتخاب بهترین مسیر اجرا" },
-        { title: "ساخت تغییرات", detail: "پیاده‌سازی قدم‌به‌قدم" },
-        { title: "بازبینی و پولیش", detail: "بررسی نتیجه و رفع ایرادها" },
-      ]
-    : [
-        { title: "Explore the project", detail: "Look through the current files and structure" },
-        { title: "Design the approach", detail: "Choose the cleanest way to build it" },
-        { title: "Build the changes", detail: "Implement it step by step" },
-        { title: "Review and polish", detail: "Check the result and fix rough edges" },
-      ];
-
-function parseJsonBlock(text) {
-  if (!text) return null;
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const raw = fenced ? fenced[1] : text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
-  try { return JSON.parse(raw); } catch { return null; }
-}
-
-/** A tools-free engine call that must answer with JSON. Used by plan + idea flows. */
-
-async function runJsonPrompt(promptText, project) {
-  const auth = loadAuth();
-  const attempts = buildAttempts(auth);
-  if (!attempts.length) return null;
-  const a = attempts[0];
-  const engine = await import("@earendil-works/pi-coding-agent");
-  const { createAgentSession, SessionManager, SettingsManager, ModelRuntime } = engine;
-  if (a.providerId === "custom") {
-    if (!config.baseUrl) return null;
-    process.env.RONIN_CUSTOM_KEY = a.apiKey;
-    const modelsDoc = {
-      providers: {
-        custom: {
-          baseUrl: config.baseUrl,
-          api: "openai-completions",
-          apiKey: "$RONIN_CUSTOM_KEY",
-          models: [{ id: a.modelId, name: a.modelId, contextWindow: 1048576, maxTokens: 32768 }],
-        },
-      },
-    };
-    fs.writeFileSync(path.join(ENGINE_DIR, "models.json"), JSON.stringify(modelsDoc, null, 2) + "\n", { mode: 0o600 });
-  }
-  const modelRuntime = await ModelRuntime.create({
-    authPath: path.join(ENGINE_DIR, "auth.json"),
-    modelsPath: path.join(ENGINE_DIR, "models.json"),
-  });
-  await modelRuntime.setRuntimeApiKey(a.providerId, a.apiKey);
-  const model = modelRuntime.getModel(a.providerId, a.modelId);
-  if (!model) return null;
-  const { session } = await createAgentSession({
-    cwd: project,
-    agentDir: ENGINE_DIR,
-    modelRuntime,
-    model,
-    sessionManager: SessionManager.create(project, SESSIONS_DIR),
-    settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 1 } }),
-    noTools: "all",
-  });
-  try {
-    await session.prompt(promptText);
-    const text = typeof session.getLastAssistantText === "function" ? session.getLastAssistantText() : "";
-    const stats = typeof session.getSessionStats === "function" ? session.getSessionStats() : null;
-    if (stats) {
-      finalizeTurnUsage({
-        providerId: a.providerId, modelId: a.modelId, apiKey: a.apiKey,
-        usage: { input: stats.tokens?.input || 0, output: stats.tokens?.output || 0, costTotal: stats.cost || 0 },
-        promptText, replyText: text || "",
-      });
-    }
-    return text || "";
-  } finally {
-    try { session.dispose(); } catch {}
-  }
-}
-
-async function proposePlan(task, project) {
-  const auth = loadAuth();
-  if (!keyList(auth[config.provider]).length) {
-    await runActivity("planning", 900);
-    return { steps: previewSteps(), simulated: true };
-  }
-  const activity = emitActivity("planning");
-  try {
-    const text = await runJsonPrompt(
-      `You are planning a coding task inside a project. Do not use tools. ` +
-      `Reply with ONLY a JSON object: {"steps":[{"title":"short step title","detail":"one short sentence"}]} ` +
-      `with 3-6 steps, in the same language as the task.\n\nTask: ${task}`,
-      project,
-    );
-    const parsed = parseJsonBlock(text || "");
-    if (parsed && Array.isArray(parsed.steps) && parsed.steps.length) {
-      return {
-        steps: parsed.steps.slice(0, 8).map((s) => ({
-          title: String(s.title || "Step").slice(0, 120),
-          detail: String(s.detail || "").slice(0, 240),
-        })),
-        simulated: false,
-      };
-    }
-  } catch (e) {
-    console.error("Ronin Code: plan proposal failed:", cleanError(e));
-  } finally {
-    await activity.end();
-  }
-  return { steps: previewSteps(), simulated: true };
-}
-
-async function executePlannedTurn(plan) {
-  const project = getProject();
-  let manifest = null;
-  try { manifest = await takeSnapshot(project); } catch {}
-  const stepStates = plan.steps.map(() => "pending");
-  const emitProgress = () =>
-    broadcast({ type: "plan_progress", planId: plan.id, steps: plan.steps.map((s, i) => ({ ...s, state: stepStates[i] })) });
-  stepStates[0] = "active";
-  emitProgress();
-  const planPrompt =
-    `${plan.task}\n\nApproved plan — follow it step by step:\n` +
-    plan.steps.map((s, i) => `${i + 1}. ${s.title} — ${s.detail}`).join("\n");
-  const onProgress = ({ toolEnds }) => {
-    // Roughly two tool actions per step; the final turn_done completes all.
-    const doneCount = Math.min(plan.steps.length - 1, Math.floor(toolEnds / 2));
-    for (let i = 0; i < plan.steps.length; i++) {
-      stepStates[i] = i < doneCount ? "done" : i === doneCount ? "active" : "pending";
-    }
-    emitProgress();
-  };
-  const auth = loadAuth();
-  if (!keyList(auth[config.provider]).length) {
-    // Preview execution: walk the visual sequence, ticking steps as we go.
-    const phases = ["reading", "writing", "terminal", "reviewing"];
-    for (let i = 0; i < plan.steps.length; i++) {
-      stepStates[i] = "active";
-      emitProgress();
-      await runActivity(phases[i % phases.length], 650);
-      stepStates[i] = "done";
-      emitProgress();
-    }
-    broadcast({ type: "assistant_message", text: "Preview mode — this plan would run for real with an API key saved in Settings." });
-    broadcast({ type: "changes", files: [] });
-    broadcast({ type: "turn_done" });
-    return;
-  }
-  // runLiveTurn broadcasts turn_done; the GUI completes remaining plan
-  // steps locally when the turn finishes.
-  await runLiveTurn(planPrompt, project, manifest, { autoMode: effectiveAutoMode(project), onProgress });
-}
-
-// ---------- idea maturation ----------
-
-async function matureIdea(idea, project) {
-  const auth = loadAuth();
-  const live = keyList(auth[config.provider]).length > 0;
-  if (live) {
-    const text = await runJsonPrompt(
-      `A user has a one-line product idea. Mature it. Do not use tools. Reply with ONLY JSON: ` +
-      `{"audience":{"who":"...","pain":"..."}, "features":["...","..."], "plan":[{"title":"...","detail":"..."}]} ` +
-      `— 4-6 features, 3-5 plan steps, same language as the idea.\n\nIdea: ${idea}`,
-      project || os.homedir(),
-    );
-    const parsed = parseJsonBlock(text || "");
-    if (parsed && parsed.audience && Array.isArray(parsed.features) && Array.isArray(parsed.plan)) {
-      return {
-        audience: { who: String(parsed.audience.who || ""), pain: String(parsed.audience.pain || "") },
-        features: parsed.features.slice(0, 8).map(String),
-        plan: parsed.plan.slice(0, 8).map((s) => ({ title: String(s.title || ""), detail: String(s.detail || "") })),
-        simulated: false,
-      };
-    }
-  }
-  const fa = config.language === "fa";
-  return {
-    audience: fa
-      ? { who: "کاربرانی که دقیقاً همین نیاز را دارند و امروز با ابزارهای پراکنده کارشان را راه می‌اندازند", pain: "نبود یک راه ساده و یکپارچه برای انجام این کار" }
-      : { who: "People who need exactly this today and currently stitch together scattered tools", pain: "No single, simple place to get it done" },
-    features: fa
-      ? ["تجربه‌ی اصلی ایده، ساده و سریع", "صفحه‌ی معرفی شیک و واضح", "فرم یا اکشن اصلی کاربر", "طراحی واکنش‌گرا برای موبایل", "بخش اعتمادساز: نمونه‌کار یا نظرات"]
-      : ["The core experience, simple and fast", "A clear, beautiful landing page", "The one main user action, front and center", "Fully responsive on mobile", "A trust section — examples or testimonials"],
-    plan: previewSteps(),
-    simulated: true,
-  };
-}
-
-// ---------- turn dispatch ----------
-
-async function runTurn(prompt, opts = {}) {
-  const project = getProject();
-  try {
-    if (opts.kind === "executePlan" && opts.plan) {
-      await executePlannedTurn(opts.plan);
-      return;
-    }
-    // A pending plan + a new user message = a revision request.
-    if (pendingPlan && pendingPlan.project === project && !opts.skipPlanGate) {
-      const revisedTask = `${pendingPlan.task}\n\nUser revision: ${prompt}`;
-      const { steps } = await proposePlan(revisedTask, project);
-      pendingPlan = { id: crypto.randomUUID(), task: pendingPlan.task, steps, project };
-      broadcast({ type: "plan_proposed", planId: pendingPlan.id, task: pendingPlan.task, steps });
-      broadcast({ type: "turn_done" });
-      return;
-    }
-    if (effectivePlanMode(project) && !opts.skipPlanGate) {
-      const { steps } = await proposePlan(prompt, project);
-      pendingPlan = { id: crypto.randomUUID(), task: prompt, steps, project };
-      broadcast({ type: "plan_proposed", planId: pendingPlan.id, task: prompt, steps });
-      broadcast({ type: "turn_done" });
-      return;
-    }
-    let manifest = null;
-    try { manifest = await takeSnapshot(project); } catch (e) { console.error("Ronin Code: snapshot failed:", cleanError(e)); }
-    const auth = loadAuth();
-    if (!keyList(auth[config.provider]).length) {
-      await runPreviewTurn();
-    } else {
-      await runLiveTurn(prompt, project, manifest, { autoMode: effectiveAutoMode(project) });
-    }
-  } catch (e) {
-    broadcast({ type: "turn_error", message: cleanError(e) || "Something went wrong during that turn. Please try again." });
-  } finally {
-    turnRunning = false;
-  }
-}
-
-// ---------- named checkpoints ----------
 
 async function handleApi(req, res, url) {
   const route = url.pathname;
@@ -884,25 +400,25 @@ async function handleApi(req, res, url) {
 
   if (route === "/api/plan/approve" && req.method === "POST") {
     const body = await readBody(req).catch(() => ({}));
-    if (!pendingPlan || body.planId !== pendingPlan.id)
+    if (!getPendingPlan() || body.planId !== getPendingPlan().id)
       return sendJson(res, 404, { error: "That plan is no longer pending", code: "not_found" });
-    if (turnRunning) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
-    const plan = pendingPlan;
-    pendingPlan = null;
-    turnRunning = true;
+    if (isTurnRunning()) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
+    const plan = getPendingPlan();
+    setPendingPlan(null);
+    setTurnRunning(true);
     sendJson(res, 200, { ok: true });
     runTurn("", { kind: "executePlan", plan }).catch((e) => {
       console.error("Ronin Code: planned turn failed:", cleanError(e));
-      turnRunning = false;
+      setTurnRunning(false);
     });
     return;
   }
 
   if (route === "/api/plan/reject" && req.method === "POST") {
     const body = await readBody(req).catch(() => ({}));
-    if (pendingPlan && (!body.planId || body.planId === pendingPlan.id)) {
-      broadcast({ type: "plan_cleared", planId: pendingPlan.id });
-      pendingPlan = null;
+    if (getPendingPlan() && (!body.planId || body.planId === getPendingPlan().id)) {
+      broadcast({ type: "plan_cleared", planId: getPendingPlan().id });
+      setPendingPlan(null);
     }
     return sendJson(res, 200, { ok: true });
   }
@@ -919,7 +435,7 @@ async function handleApi(req, res, url) {
     const body = await readBody(req).catch(() => null);
     if (!body || typeof body.idea !== "string" || !body.idea.trim())
       return sendJson(res, 400, { error: "An idea is required", code: "prompt_required" });
-    if (turnRunning) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
+    if (isTurnRunning()) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
     const base = process.env.RONIN_PROJECTS_DIR
       ? path.resolve(process.env.RONIN_PROJECTS_DIR)
       : path.join(os.homedir(), "ronin-projects");
@@ -936,13 +452,13 @@ async function handleApi(req, res, url) {
       (Array.isArray(m.features) && m.features.length ? `\nKey features:\n${m.features.map((f) => `- ${f}`).join("\n")}` : "") +
       (Array.isArray(m.plan) && m.plan.length ? `\nBuild plan:\n${m.plan.map((s, i) => `${i + 1}. ${s.title} — ${s.detail || ""}`).join("\n")}` : "") +
       `\nStart with a complete, polished index.html + styles.css + app.js static site in this folder.`;
-    turnRunning = true;
+    setTurnRunning(true);
     sendJson(res, 200, { ok: true, path: dir });
     // The idea view already showed this plan — execution respects the
     // approval gate / Auto mode inside the turn itself.
     runTurn(task, { skipPlanGate: true }).catch((e) => {
       console.error("Ronin Code: idea build failed:", cleanError(e));
-      turnRunning = false;
+      setTurnRunning(false);
     });
     return;
   }
@@ -993,15 +509,15 @@ async function handleApi(req, res, url) {
     if (!body || typeof body.prompt !== "string" || !body.prompt.trim())
       return sendJson(res, 400, { error: "A prompt is required", code: "prompt_required" });
     if (!getProject()) return sendJson(res, 400, { error: "No project is open. Open or create a project first.", code: "no_project" });
-    if (turnRunning) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
+    if (isTurnRunning()) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
     if (config.budgetCapUsd && sessionTotals().costUsd >= config.budgetCapUsd)
       return sendJson(res, 402, { error: "Your budget cap has been reached. Raise it in Settings to keep going.", code: "budget_exceeded" });
-    turnRunning = true;
+    setTurnRunning(true);
     const turnId = crypto.randomUUID();
     sendJson(res, 200, { ok: true, turnId });
     runTurn(body.prompt.trim()).catch((e) => {
       console.error("Ronin Code: turn failed:", cleanError(e));
-      turnRunning = false;
+      setTurnRunning(false);
     });
     return;
   }
