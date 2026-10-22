@@ -13,5 +13,5 @@
     "typecheck": "npm --prefix gui run typecheck",
     "lint": "npm --prefix gui run lint"
   },
-  "version": "0.1.0"
+  "version": "1.0.0"
 }

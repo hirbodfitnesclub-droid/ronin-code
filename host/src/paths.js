@@ -11,7 +11,7 @@ export const HOST_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 
 export const GUI_DIST = path.resolve(HOST_DIR, "..", "gui", "dist");
 
-export const VERSION = "0.1.0";
+export const VERSION = "1.0.0";
 
 export const RONIN_HOME = process.env.RONIN_HOME
   ? path.resolve(process.env.RONIN_HOME)
