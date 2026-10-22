@@ -1,6 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startStack, req, loginUser, loginAdmin, lastOtpFor, resetRateLimits, ADMIN_PHONE, USER_PHONE } from './helpers.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { startStack, req, loginUser, loginAdmin, lastOtpFor, resetRateLimits, postClaim, PNG_1PX, ADMIN_PHONE, USER_PHONE } from './helpers.mjs';
 
 let stack, user, admin;
 const PHONE2 = '09122222222';
@@ -25,17 +27,28 @@ test('happy path: OTP login → order → admin approve → ledger credit', asyn
   assert.equal(pack1.tokens, 1000); // tokensPerUsd=1000 in tests
   assert.equal(pack1.priceRials, 50_000);
 
-  const orderRes = await req(stack.base, '/api/orders', {
-    method: 'POST', token: user.accessToken,
-    body: { packId: 'pack-1', payerName: 'Ali Reza', cardLast4: '1234', reference: 'TRACK-9876', paidAtText: 'دیروز ۱۴:۳۰' },
-  });
+  // Receipt-only claim: one image upload, NO form fields at all.
+  const orderRes = await postClaim(stack.base, user.accessToken, 'pack-1');
   assert.equal(orderRes.status, 201);
   const order = orderRes.json.order;
   assert.equal(order.status, 'pending');
+  assert.equal(order.hasReceipt, true);
+  assert.equal(order.payerName, undefined);
+  assert.equal(order.cardLast4, undefined);
+  assert.equal(order.reference, undefined);
 
-  // Admin queue sees it; approve with the exact received amount → full credit + activation SMS.
+  // Admin queue sees it — with a signed receipt URL and no duplicate flag;
+  // the signed URL actually serves the uploaded bytes on the admin listener.
   const queue = await req(stack.adminBase, '/admin-api/orders?status=pending', { cookie: admin.cookie });
-  assert.ok(queue.json.orders.some((o) => o.id === order.id));
+  const queued = queue.json.orders.find((o) => o.id === order.id);
+  assert.ok(queued);
+  assert.equal(queued.duplicateImage, false);
+  assert.ok(typeof queued.receiptUrl === 'string' && queued.receiptUrl.includes('/admin-api/receipt-file'));
+  const img = await fetch(stack.adminBase + queued.receiptUrl);
+  assert.equal(img.status, 200);
+  assert.ok(Buffer.from(await img.arrayBuffer()).equals(PNG_1PX));
+  const tampered = await fetch(stack.adminBase + queued.receiptUrl.replace(/sig=[^&]+/, 'sig=AAAA'));
+  assert.equal(tampered.status, 403);
   const review = await req(stack.adminBase, `/admin-api/orders/${order.id}/review`, {
     method: 'POST', cookie: admin.cookie, csrf: admin.csrf,
     body: { action: 'approve', receivedAmountRials: 50_000, note: 'ok' },
@@ -60,10 +73,7 @@ test('happy path: OTP login → order → admin approve → ledger credit', asyn
 
 test('partial received amount grants proportional credit; rejection requires a reason', async () => {
   const u2 = await loginUser(stack, PHONE2);
-  const mk = () => req(stack.base, '/api/orders', {
-    method: 'POST', token: u2.accessToken,
-    body: { packId: 'pack-1', payerName: 'Sara', cardLast4: '9876', reference: 'REF-2222' },
-  });
+  const mk = () => postClaim(stack.base, u2.accessToken, 'pack-1');
   const o1 = (await mk()).json.order;
   const half = await req(stack.adminBase, `/admin-api/orders/${o1.id}/review`, {
     method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { action: 'approve', receivedAmountRials: 25_000 },
@@ -86,14 +96,65 @@ test('partial received amount grants proportional credit; rejection requires a r
 
 test('max 3 pending orders per user', async () => {
   const u = await loginUser(stack, '09123333333');
-  const body = { packId: 'pack-1', payerName: 'Max', cardLast4: '1111', reference: 'R-0001' };
   for (let i = 0; i < 3; i++) {
-    const r = await req(stack.base, '/api/orders', { method: 'POST', token: u.accessToken, body: { ...body, reference: `R-000${i}` } });
+    const r = await postClaim(stack.base, u.accessToken, 'pack-1');
     assert.equal(r.status, 201);
   }
-  const fourth = await req(stack.base, '/api/orders', { method: 'POST', token: u.accessToken, body: { ...body, reference: 'R-0009' } });
+  const fourth = await postClaim(stack.base, u.accessToken, 'pack-1');
   assert.equal(fourth.status, 409);
   assert.equal(fourth.json.error.code, 'too_many_pending');
+  // The refused claim's upload was cleaned up — no orphan receipt object.
+  const stored = fs.readdirSync(path.join(stack.cfg.receiptsDir, u.user.id));
+  assert.equal(stored.length, 3);
+});
+
+test('receipt upload validation: non-image, missing file and oversize are rejected', async () => {
+  const notImage = await postClaim(stack.base, user.accessToken, 'pack-1', {
+    data: Buffer.from('definitely not an image'), contentType: 'text/plain', filename: 'receipt.txt',
+  });
+  assert.equal(notImage.status, 400);
+  assert.equal(notImage.json.error.code, 'invalid_receipt_type');
+
+  const missing = await postClaim(stack.base, user.accessToken, 'pack-1', { data: null });
+  assert.equal(missing.status, 400);
+  assert.equal(missing.json.error.code, 'receipt_required');
+
+  const oversize = await postClaim(stack.base, user.accessToken, 'pack-1', {
+    data: Buffer.alloc(5 * 1024 * 1024 + 1, 7), contentType: 'image/png', filename: 'huge.png',
+  });
+  assert.equal(oversize.status, 400);
+  assert.equal(oversize.json.error.code, 'receipt_too_large');
+
+  const badPack = await postClaim(stack.base, user.accessToken, 'no-such-pack');
+  assert.equal(badPack.status, 400);
+  assert.equal(badPack.json.error.code, 'pack_not_found');
+});
+
+test('duplicate receipt image is flagged for the admin (passive flag only)', async () => {
+  const shared = Buffer.concat([PNG_1PX, Buffer.from('shared-receipt-bytes')]);
+  const unique = Buffer.concat([PNG_1PX, Buffer.from('one-of-a-kind-bytes')]);
+  const a = await loginUser(stack, '09120000101');
+  const b = await loginUser(stack, '09120000102');
+  const c = await loginUser(stack, '09120000103');
+  const oa = (await postClaim(stack.base, a.accessToken, 'pack-1', { data: shared })).json.order;
+  const ob = (await postClaim(stack.base, b.accessToken, 'pack-1', { data: shared })).json.order;
+  const oc = (await postClaim(stack.base, c.accessToken, 'pack-1', { data: unique })).json.order;
+  assert.ok(oa.id && ob.id && oc.id);
+
+  const detailA = await req(stack.adminBase, `/admin-api/orders/${oa.id}`, { cookie: admin.cookie });
+  assert.equal(detailA.json.order.duplicateImage, true);
+  const detailB = await req(stack.adminBase, `/admin-api/orders/${ob.id}`, { cookie: admin.cookie });
+  assert.equal(detailB.json.order.duplicateImage, true);
+  const detailC = await req(stack.adminBase, `/admin-api/orders/${oc.id}`, { cookie: admin.cookie });
+  assert.equal(detailC.json.order.duplicateImage, false);
+  assert.ok(detailC.json.order.receiptUrl);
+
+  // The flag changes nothing by itself: a flagged claim can still be approved.
+  const review = await req(stack.adminBase, `/admin-api/orders/${oa.id}/review`, {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { action: 'approve', receivedAmountRials: 50_000 },
+  });
+  assert.equal(review.status, 200);
+  assert.equal(review.json.grantedTokens, 1000);
 });
 
 test('OTP brute force: 5 wrong attempts lock the code, even the right code then fails', async () => {

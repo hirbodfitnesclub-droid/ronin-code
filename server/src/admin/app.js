@@ -8,7 +8,8 @@ import { audit } from '../db.js';
 import { getSetting, setSetting, getPacks } from '../settings.js';
 import { ledgerBalance, adjustCredit, userLedger } from '../ledger.js';
 import * as auth from '../auth.js';
-import { listOrders, getOrder, reviewOrder, publicOrder } from '../orders.js';
+import { listOrders, getOrder, reviewOrder, adminOrders } from '../orders.js';
+import { createStorage } from '../storage.js';
 import * as adminAuth from './auth.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -22,6 +23,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=u
  * through the same atomic approve/reject RPCs as any other path.
  */
 export function createAdminApp(db, cfg, sms) {
+  const storage = createStorage(cfg);
   const router = createRouter();
   const guard = async (req, { mutate = false } = {}) => {
     const session = await adminAuth.authenticateAdmin(db, req);
@@ -99,7 +101,8 @@ export function createAdminApp(db, cfg, sms) {
       user: { id: user.id, phone: user.phone, name: user.name, isActive: Boolean(user.is_active), createdAt: ms(user.created_at), lastLoginAt: ms(user.last_login_at) },
       balanceTokens: await ledgerBalance(db, user.id),
       ledger: await userLedger(db, user.id, 100),
-      orders: (await db.many('SELECT * FROM public.orders WHERE user_id = $1 ORDER BY id DESC LIMIT 50', [user.id])).map(publicOrder),
+      orders: await adminOrders(db, cfg, storage,
+        await db.many('SELECT * FROM public.orders WHERE user_id = $1 ORDER BY id DESC LIMIT 50', [user.id])),
       lots: lotRows.map((l) => ({
         id: Number(l.id), source: l.source,
         tokensTotal: Number(l.tokens_total), tokensLeft: Number(l.tokens_left),
@@ -137,10 +140,13 @@ export function createAdminApp(db, cfg, sms) {
   });
 
   // ── orders queue ────────────────────────────────────────────────────────
+  // Every claim carries a receipt photo: responses include a short-lived
+  // signed URL (`receiptUrl`) and `duplicateImage` (same photo on another
+  // claim — a passive flag; the owner decides, nothing is auto-rejected).
   router.get('/admin-api/orders', async (req, res, { query }) => {
     await guard(req);
     const status = query.get('status');
-    sendJson(res, 200, { orders: (await listOrders(db, { status: status || null, limit: 200 })).map(publicOrder) });
+    sendJson(res, 200, { orders: await adminOrders(db, cfg, storage, await listOrders(db, { status: status || null, limit: 200 })) });
   });
 
   router.get('/admin-api/orders/:id', async (req, res, { params }) => {
@@ -148,7 +154,27 @@ export function createAdminApp(db, cfg, sms) {
     const order = await getOrder(db, Number(params.id));
     if (!order) throw notFound('order_not_found', 'Order not found.');
     const user = await db.one('SELECT id, phone, name FROM public.users WHERE id = $1', [order.user_id]);
-    sendJson(res, 200, { order: publicOrder({ ...order, user_phone: user?.phone }), user });
+    const [enriched] = await adminOrders(db, cfg, storage, [{ ...order, user_phone: user?.phone }]);
+    sendJson(res, 200, { order: enriched, user });
+  });
+
+  // Local-storage signed URLs resolve here (the signature IS the capability,
+  // exactly like a Supabase signed URL — short-lived, no session needed).
+  // With the Supabase backend, receiptUrl points at Supabase directly and
+  // this route simply never matches a real object.
+  router.get('/admin-api/receipt-file', async (req, res, { query }) => {
+    const key = query.get('key');
+    if (!storage.verifySignedParams(key, query.get('exp'), query.get('sig'))) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Forbidden');
+    }
+    const obj = await storage.read(key);
+    if (!obj) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Not found');
+    }
+    res.writeHead(200, { 'Content-Type': obj.contentType, 'Content-Length': obj.buffer.length, 'Cache-Control': 'private, no-store' });
+    return res.end(obj.buffer);
   });
 
   router.post('/admin-api/orders/:id/review', async (req, res, { params }) => {
@@ -167,7 +193,8 @@ export function createAdminApp(db, cfg, sms) {
       if (order.status === 'approved') void sms.sendPackageActivated(user.phone, grantedTokens, order.pack_title);
       else if (order.status === 'rejected') void sms.sendOrderRejected(user.phone, order.reject_reason);
     }
-    sendJson(res, 200, { order: publicOrder(order), grantedTokens });
+    const [enriched] = await adminOrders(db, cfg, storage, [order]);
+    sendJson(res, 200, { order: enriched, grantedTokens });
   });
 
   // ── settings: card, packs, models, token config ─────────────────────────

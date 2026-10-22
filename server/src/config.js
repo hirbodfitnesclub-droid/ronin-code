@@ -51,6 +51,19 @@ export function loadConfig(overrides = {}) {
     // rule: 300 = 5 min). Our guard layer mirrors expiry from this value.
     otpTtlSeconds: int(env.OTP_TTL_SECONDS, 300),
 
+    // ── Receipt storage (card-to-card claim photos) ──────────────────────
+    // Production: Supabase Storage — project base URL + service-role key;
+    // receipts live in the PRIVATE bucket `receipts` (migration 3).
+    supabaseUrl: (env.SUPABASE_URL || '').replace(/\/$/, ''),
+    supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY || '',
+    // Local fallback (dev/tests, no Storage service): directory on disk that
+    // honours the same object-key contract.
+    receiptsDir: env.RECEIPTS_DIR || path.join(SERVER_DIR, 'data', 'receipts'),
+    // Upload rules: images only, at most 5 MiB.
+    receiptMaxBytes: int(env.RECEIPT_MAX_BYTES, 5 * 1024 * 1024),
+    // Lifetime of the signed receipt URLs handed to the admin panel.
+    receiptUrlTtlSec: int(env.RECEIPT_URL_TTL_SECONDS, 600),
+
     authSecret: env.AUTH_SECRET || '',
     adminPhones: list(env.ADMIN_PHONES),
     smsProvider: (env.SMS_PROVIDER || 'console').toLowerCase(),

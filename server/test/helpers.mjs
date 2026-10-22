@@ -102,6 +102,7 @@ export async function startStack(overrides = {}) {
       tokensPerUsd: 1000,
       chatMaxConcurrent: 50,
       chatRatePerMin: 10_000,
+      receiptsDir: path.join(dir, 'receipts'),
       ...(overrides.cfg ?? {}),
     });
     db = createDb(cfg);
@@ -208,6 +209,27 @@ export async function loginAdmin(stack) {
   if (r2.status !== 200) throw new Error(`admin otp verify failed: ${r2.status} ${r2.text}`);
   const cookie = (r2.headers.get('set-cookie') || '').split(';')[0];
   return { cookie, csrf: r2.json.csrfToken, phone: ADMIN_PHONE };
+}
+
+/** A real 1×1 transparent PNG — the canonical test receipt image. */
+export const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64');
+
+/** POST a receipt-only claim (multipart/form-data) like the real client. */
+export async function postClaim(base, token, packId, { data = PNG_1PX, contentType = 'image/png', filename = 'receipt.png', field = 'receipt' } = {}) {
+  const form = new FormData();
+  form.set('packId', packId);
+  if (data !== null) form.set(field, new Blob([data], { type: contentType }), filename);
+  const res = await fetch(base + '/api/orders', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* not json */ }
+  return { status: res.status, json, text };
 }
 
 /** Give a user credit directly (test setup shortcut via the real RPC path). */

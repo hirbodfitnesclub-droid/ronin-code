@@ -27,6 +27,7 @@ admin browser ──(admin session)────▶ admin app :7444 (standalone)
 | Concern | Lives in | Notes |
 |---|---|---|
 | Users, ledger, lots, holds, claims, audit, settings, devices | Postgres schema `public` (`../supabase/migrations/`) | RLS on; users can SELECT only their own rows |
+| Receipt photos (claim evidence) | Supabase Storage, PRIVATE bucket `receipts` (migration 3) | Upload + admin signed URLs via the service role only; local dev stores the same object keys on disk (`RECEIPTS_DIR`, `src/storage.js`) |
 | **All money mutations** | `SECURITY DEFINER` RPCs in `20261022000002_rpc.sql` | `grant_credit`, `reserve_hold`, `commit_hold`, `release_hold`, `adjust_credit`, `create_claim`, `approve_claim`, `reject_claim`, `run_expiry_sweep`, `account_status`. Direct table writes are revoked from `anon`/`authenticated`; only `service_role` may execute the RPCs |
 | End-user identity + sessions | Supabase Auth (GoTrue), phone OTP | SMS delivered via our Send SMS hook → Kavenegar Verify Lookup |
 | OTP brute-force lockout (5 attempts) | `public.otp_guards` (ours) | GoTrue does **not** lock a code after N wrong tries — verified against v2.197; our verify wrapper counts failures and locks |
@@ -87,8 +88,14 @@ User/admin-visible flows deliberately mirror the Liro project (studied in
 approved security review (`ronin-subscription-security.md`):
 
 **Copied from Liro**
-- Card-to-card claims: `{payerName, cardLast4, reference (tracking code), paidAtText?}` —
-  **no receipt screenshot** (Liro doesn't have one either). Max **3 pending** claims per user.
+- Card-to-card claims — **owner decision (2026-10-22) supersedes Liro here:** a claim is
+  **one receipt photo and nothing else**. The user picks a pack and uploads a single receipt
+  image (image/* only, ≤ 5 MB); there are NO form fields (no payer name, no card last-4,
+  no tracking code). The pack price/token snapshot is locked at claim time; the image's
+  SHA-256 is stored, and the admin queue flags `duplicateImage` when the same photo appears
+  on another claim — a passive flag only, the owner reviews every receipt personally.
+  Max **3 pending** claims per user. Everything else about the claim lifecycle (atomic
+  idempotent approval etc.) is unchanged from Liro semantics.
 - Shop card + packs are runtime settings (JSONB in the `settings` table), admin-editable.
 - Admin approval is **one atomic, idempotent transaction** (the `approve_claim`
   RPC); a second review returns **409** and can never double-credit. Approval
@@ -147,7 +154,7 @@ sending (dev/tests; codes are also kept in an in-memory outbox for tests).
 | `GET /api/account-status` | **Daily revalidation** — server-truth status (see above) |
 | `GET /api/packs` | Packs (tokens computed) + shop card |
 | `GET /api/models` | Model multiplier table (display) |
-| `POST /api/orders` · `GET /api/orders` | Card-to-card claims |
+| `POST /api/orders` · `GET /api/orders` | Card-to-card claims — POST is `multipart/form-data`: field `packId` + file part `receipt` (image, ≤ 5 MB), nothing else |
 | `GET /api/credits` | Balance + ledger history + orders (Liro parity) |
 | `POST /v1/chat/completions` | Metered, OpenAI-compatible; `Idempotency-Key` supported |
 | `POST /hooks/send-sms` | Supabase Auth Send SMS hook (Standard Webhooks signed) |
@@ -155,7 +162,9 @@ sending (dev/tests; codes are also kept in an in-memory outbox for tests).
 
 Admin API lives under `/admin-api/*` **on the admin listener only** (overview,
 users + charge/toggle, orders queue + review, settings: card/packs/models/
-token-config, audit).
+token-config, audit). Order list/detail responses add `receiptUrl`
+(short-lived signed URL for the receipt photo) and `duplicateImage`
+(boolean — same photo on another claim; informational only).
 
 ## Honest gaps
 
@@ -178,3 +187,12 @@ token-config, audit).
   users are governed by our 60s cooldown.
 - Admin MFA beyond phone-OTP (TOTP) and PSP (online gateway) payments are
   future work — card-to-card is the launch rail, per the owner.
+- Receipt storage locally: the dev stack has no Supabase Storage service, so
+  `src/storage.js` falls back to files under `RECEIPTS_DIR` with identical
+  object keys and HMAC-signed URLs served by the admin app. Migration 3
+  creates the real bucket + storage policies only where a `storage` schema
+  exists (Supabase), and is a no-op elsewhere by design.
+- Duplicate-receipt detection is deliberately a **passive admin flag**
+  (`image_sha256` equality), not an automatic rejection — and it cannot see
+  *edited* copies of a receipt (different bytes, different hash). The owner's
+  personal review is the fraud control, per the owner's decision.

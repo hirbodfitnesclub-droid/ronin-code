@@ -8,9 +8,12 @@ import { getPacks, getCard, getModels } from './settings.js';
 import { ledgerBalance, spendableTokens, userLedger } from './ledger.js';
 import { createOrder, userOrders, publicOrder } from './orders.js';
 import { handleChatCompletions } from './proxy.js';
+import { createStorage } from './storage.js';
+import { parseMultipart } from './upload.js';
 
 /** User API application (no admin surface here at all — the admin is a separate app). */
 export function createUserApp(db, cfg, sms) {
+  const storage = createStorage(cfg);
   const router = createRouter();
   const requireUser = (req) => auth.authenticate(db, cfg, bearer(req));
 
@@ -121,10 +124,17 @@ export function createUserApp(db, cfg, sms) {
     sendJson(res, 200, { models: await getModels(db, cfg) });
   });
 
+  // Card-to-card claim = ONE receipt image (multipart/form-data):
+  // fields: packId · file part: receipt (image/*, ≤ receiptMaxBytes).
+  // No other claim fields exist (owner decision — receipt photo only).
   router.post('/api/orders', async (req, res) => {
     const { user } = await requireUser(req);
-    const body = await readJson(req);
-    const order = await createOrder(db, cfg, user, body);
+    const raw = await readBody(req, cfg.receiptMaxBytes + 256 * 1024);
+    const { fields, files } = parseMultipart(raw, req.headers['content-type']);
+    const order = await createOrder(db, cfg, storage, user, {
+      packId: fields.packId,
+      receipt: files.receipt ? { data: files.receipt.data, contentType: files.receipt.contentType } : null,
+    });
     sendJson(res, 201, { order: publicOrder(order) });
   });
 

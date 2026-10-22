@@ -1,41 +1,63 @@
 import { getPack } from './settings.js';
 import { badRequest, notFound, conflict, num, ms } from './util.js';
+import { receiptKey, sha256Hex } from './storage.js';
 
 /**
- * Card-to-card purchase — Liro-exact visible flow:
+ * Card-to-card purchase — RECEIPT PHOTO ONLY (owner decision 2026-10-22,
+ * superseding the Liro form-field claim):
  *  user picks a pack → sees the shop card → transfers with their banking app →
- *  submits a claim {payerName, cardLast4, reference, paidAt?} → status pending →
- *  admin approves (entering the actually-received amount; partial credit if it
- *  differs) or rejects with a user-visible reason + internal note.
+ *  uploads ONE receipt image → claim is `pending` (pack price/token snapshot
+ *  locked in the row) → the owner personally reviews the image in the admin
+ *  panel → approve (entering the actually-received amount; partial credit if
+ *  it differs) or reject with a user-visible reason + internal note.
+ * There are NO claim form fields. The image's SHA-256 is stored so the admin
+ * list/detail can flag `duplicateImage` when the same photo appears on more
+ * than one claim — a passive flag only; the human decides.
  * Approval is ONE atomic, idempotent RPC (approve_claim): a second review
  * gets a 409 and can never double-credit.
  */
 
 export const MAX_PENDING_PER_USER = 3;
 
-export async function createOrder(db, cfg, user, { packId, payerName, cardLast4, reference, paidAtText = null, paidAt = null }) {
-  paidAtText = paidAtText ?? paidAt;
+/**
+ * Create a claim from an uploaded receipt image { data: Buffer, contentType }.
+ * Validates the upload (image/* only, ≤ cfg.receiptMaxBytes), stores the
+ * object under the caller's own prefix, then calls the create_claim RPC.
+ * If the RPC refuses the claim (e.g. too many pending), the just-stored
+ * object is removed again so storage never accumulates orphans.
+ */
+export async function createOrder(db, cfg, storage, user, { packId, receipt }) {
   const pack = await getPack(db, cfg, packId);
   if (!pack) throw badRequest('pack_not_found', 'Unknown pack.');
-  if (typeof payerName !== 'string' || payerName.trim().length < 2 || payerName.trim().length > 100)
-    throw badRequest('invalid_payer_name', 'Payer name must be 2–100 characters.');
-  if (!/^\d{4}$/.test(String(cardLast4 ?? ''))) throw badRequest('invalid_card_last4', 'Card last-4 must be exactly 4 digits.');
-  if (typeof reference !== 'string' || reference.trim().length < 4 || reference.trim().length > 64)
-    throw badRequest('invalid_reference', 'Tracking reference must be at least 4 characters.');
-
-  const row = await db.one(
-    'SELECT public.create_claim($1,$2,$3,$4,$5,$6,$7,$8,$9) AS r',
-    [user.id, pack.id, pack.title, pack.tokens, pack.priceRials ?? 0,
-     payerName.trim(), String(cardLast4), reference.trim(),
-     paidAtText ? String(paidAtText).slice(0, 100) : null]);
-  const r = row.r;
-  if (!r.ok) {
-    if (r.error === 'too_many_pending') {
-      throw conflict('too_many_pending', 'You already have 3 pending payment claims. Wait for review.');
-    }
-    throw new Error(`create_claim failed: ${r.error}`);
+  if (!receipt || !receipt.data?.length) throw badRequest('receipt_required', 'A receipt image is required.');
+  const contentType = String(receipt.contentType || '').toLowerCase();
+  if (!contentType.startsWith('image/')) {
+    throw badRequest('invalid_receipt_type', 'The receipt must be an image file.');
   }
-  return r.order;
+  if (receipt.data.length > cfg.receiptMaxBytes) {
+    throw badRequest('receipt_too_large', `The receipt image must be at most ${Math.floor(cfg.receiptMaxBytes / (1024 * 1024))} MB.`);
+  }
+
+  const imageSha256 = sha256Hex(receipt.data);
+  const key = receiptKey(user.id, contentType);
+  await storage.put(key, receipt.data, contentType);
+  try {
+    const row = await db.one(
+      'SELECT public.create_claim($1,$2,$3,$4,$5,$6,$7) AS r',
+      [user.id, pack.id, pack.title, pack.tokens, pack.priceRials ?? 0, key, imageSha256]);
+    const r = row.r;
+    if (!r.ok) {
+      if (r.error === 'too_many_pending') {
+        throw conflict('too_many_pending', `You already have ${MAX_PENDING_PER_USER} pending payment claims. Wait for review.`);
+      }
+      if (r.error === 'receipt_required') throw badRequest('receipt_required', 'A receipt image is required.');
+      throw new Error(`create_claim failed: ${r.error}`);
+    }
+    return r.order;
+  } catch (e) {
+    await storage.remove(key).catch(() => {});
+    throw e;
+  }
 }
 
 export async function getOrder(db, id) {
@@ -56,8 +78,8 @@ export async function userOrders(db, userId, limit = 20) {
 
 /**
  * Review an order. `receivedAmountRials` (approve only): if it differs from the
- * pack price, credit is granted proportionally (Liro semantics as briefed).
- * All money movement happens inside the approve/reject RPC — atomically.
+ * pack price, credit is granted proportionally. All money movement happens
+ * inside the approve/reject RPC — atomically.
  * Returns { order, grantedTokens }.
  */
 export async function reviewOrder(db, cfg, adminPhone, orderId, { action, receivedAmountRials = null, reason = null, note = null }) {
@@ -98,15 +120,38 @@ export async function reviewOrder(db, cfg, adminPhone, orderId, { action, receiv
   return { order: r.order, grantedTokens: 0 };
 }
 
-export function publicOrder(o) {
+export function publicOrder(o, extras = {}) {
   return {
     id: Number(o.id), packId: o.pack_id, packTitle: o.pack_title, tokens: num(o.tokens),
     priceRials: num(o.price_rials), receivedAmountRials: num(o.received_amount_rials),
-    payerName: o.payer_name, cardLast4: o.card_last4, reference: o.reference,
-    paidAtText: o.paid_at_text, status: o.status,
+    hasReceipt: Boolean(o.receipt_path),
+    status: o.status,
     rejectReason: o.reject_reason, adminNote: o.admin_note,
     reviewedBy: o.reviewed_by, reviewedAt: ms(o.reviewed_at), createdAt: ms(o.created_at),
     ...(o.user_phone ? { userPhone: o.user_phone } : {}),
     ...(o.user_id ? { userId: o.user_id } : {}),
+    ...extras,
   };
+}
+
+/**
+ * Admin view of claims: publicOrder + a short-lived signed receipt URL +
+ * `duplicateImage` (the same image_sha256 exists on at least one OTHER
+ * claim). The flag is informational only — the owner reviews personally.
+ */
+export async function adminOrders(db, cfg, storage, rows) {
+  if (!rows.length) return [];
+  const keys = [...new Set(rows.map((o) => o.receipt_path).filter(Boolean))];
+  const urls = keys.length ? await storage.signedUrls(keys, cfg.receiptUrlTtlSec) : new Map();
+  const hashes = [...new Set(rows.map((o) => o.image_sha256).filter(Boolean))];
+  const dupRows = hashes.length
+    ? await db.many(
+      'SELECT image_sha256 FROM public.orders WHERE image_sha256 = ANY($1) GROUP BY image_sha256 HAVING count(*) > 1',
+      [hashes])
+    : [];
+  const dupSet = new Set(dupRows.map((r) => r.image_sha256));
+  return rows.map((o) => publicOrder(o, {
+    receiptUrl: o.receipt_path ? urls.get(o.receipt_path) ?? null : null,
+    duplicateImage: Boolean(o.image_sha256 && dupSet.has(o.image_sha256)),
+  }));
 }

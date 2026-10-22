@@ -87,11 +87,12 @@ async function loadOrders() {
   const status = $('#orders-filter').value;
   const { orders } = await api('/admin-api/orders' + (status ? `?status=${status}` : ''));
   $('#orders-list').innerHTML = orders.length ? `<table><thead><tr>
-    <th>#</th><th>کاربر</th><th>بسته</th><th>مبلغ (ریال)</th><th>پرداخت‌کننده</th><th>۴ رقم کارت</th><th>کد پیگیری</th><th>زمان واریز</th><th>وضعیت</th><th></th>
+    <th>#</th><th>کاربر</th><th>بسته</th><th>مبلغ (ریال)</th><th>رسید</th><th>وضعیت</th><th></th>
     </tr></thead><tbody>${orders.map((o) => `<tr>
       <td>${o.id}</td><td dir="ltr">${esc(o.userPhone || '')}</td><td>${esc(o.packTitle)}<br><span class="muted">${fmt(o.tokens)} توکن</span></td>
-      <td>${fmt(o.priceRials)}</td><td>${esc(o.payerName)}</td><td dir="ltr">${esc(o.cardLast4)}</td><td dir="ltr">${esc(o.reference)}</td>
-      <td>${esc(o.paidAtText || '—')}</td><td><span class="pill ${o.status}">${statusFa(o.status)}</span></td>
+      <td>${fmt(o.priceRials)}</td>
+      <td>${o.receiptUrl ? `<a href="${esc(o.receiptUrl)}" target="_blank" rel="noopener">مشاهده رسید</a>` : '—'}${o.duplicateImage ? ' <span class="pill rejected">عکس تکراری</span>' : ''}</td>
+      <td><span class="pill ${o.status}">${statusFa(o.status)}</span></td>
       <td><button class="ghost" data-order="${o.id}">بررسی</button></td></tr>`).join('')}</tbody></table>`
     : '<p class="muted">سفارشی نیست.</p>';
   $$('#orders-list [data-order]').forEach((b) => b.addEventListener('click', () => void showOrder(Number(b.dataset.order))));
@@ -108,11 +109,11 @@ async function showOrder(id) {
       <dt>کاربر</dt><dd dir="ltr">${esc(user?.phone || '')} ${esc(user?.name || '')}</dd>
       <dt>بسته</dt><dd>${esc(order.packTitle)} — ${fmt(order.tokens)} توکن</dd>
       <dt>مبلغ مورد انتظار</dt><dd>${fmt(order.priceRials)} ریال</dd>
-      <dt>پرداخت‌کننده</dt><dd>${esc(order.payerName)}</dd>
-      <dt>۴ رقم آخر کارت</dt><dd dir="ltr">${esc(order.cardLast4)}</dd>
-      <dt>کد پیگیری</dt><dd dir="ltr">${esc(order.reference)}</dd>
-      <dt>زمان واریز (ادعایی)</dt><dd>${esc(order.paidAtText || '—')}</dd>
       <dt>ثبت</dt><dd>${fmtDate(order.createdAt)}</dd>
+      ${order.duplicateImage ? `<dt>هشدار</dt><dd><span class="pill rejected">این عکس رسید در ادعای دیگری هم استفاده شده است</span></dd>` : ''}
+    </dl>
+    ${order.receiptUrl ? `<p><a href="${esc(order.receiptUrl)}" target="_blank" rel="noopener"><img src="${esc(order.receiptUrl)}" alt="رسید پرداخت" style="max-width:420px;max-height:520px;border-radius:10px;border:1px solid rgba(255,255,255,.12)"></a></p>` : '<p class="muted">رسیدی ثبت نشده است.</p>'}
+    <dl class="kv">
       <dt>وضعیت</dt><dd><span class="pill ${order.status}">${statusFa(order.status)}</span></dd>
       ${order.reviewedAt ? `<dt>بررسی</dt><dd>${esc(order.reviewedBy || '')} — ${fmtDate(order.reviewedAt)}${order.receivedAmountRials != null ? ` — دریافتی: ${fmt(order.receivedAmountRials)} ریال` : ''}</dd>` : ''}
       ${order.rejectReason ? `<dt>دلیل رد</dt><dd>${esc(order.rejectReason)}</dd>` : ''}
