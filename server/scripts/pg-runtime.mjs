@@ -47,11 +47,17 @@ export function pgBinDir() {
   return stagedBinDir;
 }
 
+/** The `postgres` system user may not exist (fresh VM): create it on demand. */
+function ensurePostgresUser() {
+  if (!isRoot()) return;
+  try { execFileSync('id', ['postgres'], { stdio: 'ignore' }); }
+  catch { execFileSync('useradd', ['--system', '--shell', '/usr/sbin/nologin', 'postgres']); }
+}
+
 /** Postgres refuses to run as root: run server binaries as `postgres`. */
 function pgCmd(bin, args) {
   if (!isRoot()) return [bin, args];
-  try { execFileSync('id', ['postgres'], { stdio: 'ignore' }); }
-  catch { execFileSync('useradd', ['--system', '--shell', '/usr/sbin/nologin', 'postgres']); }
+  ensurePostgresUser();
   return ['runuser', ['-u', 'postgres', '--', bin, ...args]];
 }
 
@@ -69,6 +75,7 @@ function chownToPostgres(dir) {
  * Initialises the data directory on first use. Returns { stop, port, url }.
  */
 export async function startPostgres({ dataDir, port }) {
+  ensurePostgresUser(); // must precede the chowns below
   const runDir = `${dataDir}-run`;
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(runDir, { recursive: true });
