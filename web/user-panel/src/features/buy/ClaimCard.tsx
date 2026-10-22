@@ -126,10 +126,10 @@ export function ClaimCard({ pack, onGoPurchases }: { pack: Pack | null; onGoPurc
             <span className="buy-preview-name ltr-island">{file.name}</span>
             <div className="buy-preview-actions">
               <button type="button" className="btn" onClick={() => inputRef.current?.click()}>
-                {t('buy.receiptChoose')}
+                {t('buy.receiptReplace')}
               </button>
               <button type="button" className="btn btn-ghost" onClick={removeFile}>
-                {t('common.cancel')}
+                {t('buy.receiptRemove')}
               </button>
             </div>
           </div>
@@ -176,7 +176,7 @@ export function ClaimCard({ pack, onGoPurchases }: { pack: Pack | null; onGoPurc
       <ul className="buy-notes">
         <li>{t('buy.step2')}</li>
         <li>{t('buy.step3')}</li>
-        <li>{t('errors.too_many_pending')}</li>
+        <li>{t('buy.maxPendingNote')}</li>
       </ul>
     </Card>
   );

@@ -127,9 +127,7 @@ function LedgerRowView({ row }: { row: LedgerRow }) {
             {fmtNum(row.deltaTokens)}
           </span>
         </div>
-        <div className="history-balance-after">
-          {t('dashboard.balance')}: <span className="ltr-island">{fmtNum(row.balanceAfter)}</span>
-        </div>
+        <div className="history-balance-after">{t('history.balanceAfter', { amount: fmtNum(row.balanceAfter) })}</div>
       </div>
     </div>
   );
@@ -230,11 +228,14 @@ export function HistoryScreen() {
             {rows.length === 0 ? (
               <EmptyState title={t('history.title')} body={t('history.empty')} />
             ) : (
-              <div className="history-list">
-                {rows.map((row) => (
-                  <LedgerRowView key={row.id} row={row} />
-                ))}
-              </div>
+              <>
+                <div className="history-list">
+                  {rows.map((row) => (
+                    <LedgerRowView key={row.id} row={row} />
+                  ))}
+                </div>
+                <div className="history-note">{t('history.latestNote')}</div>
+              </>
             )}
           </>
         ) : null}

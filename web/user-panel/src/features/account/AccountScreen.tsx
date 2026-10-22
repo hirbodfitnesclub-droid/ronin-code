@@ -160,7 +160,7 @@ export function AccountScreen() {
               </span>
             </div>
             <div className="account-row">
-              <span className="account-row-label">{t('dashboard.planStatus')}</span>
+              <span className="account-row-label">{t('account.creditStatus')}</span>
               <span className="account-row-value">
                 {spendable != null ? (
                   <>
@@ -171,14 +171,12 @@ export function AccountScreen() {
                 )}
               </span>
             </div>
-            {/* No i18n keys exist yet for help/support (reported as missing);
-                labels below are the interim literals for both locales. */}
             <div className="account-row">
-              <span className="account-row-label">{lang === 'fa' ? 'راهنما و سوالات متداول' : 'Help & FAQ'}</span>
+              <span className="account-row-label">{t('account.helpFaq')}</span>
               <Chevron />
             </div>
             <div className="account-row">
-              <span className="account-row-label">{lang === 'fa' ? 'پشتیبانی' : 'Support'}</span>
+              <span className="account-row-label">{t('account.support')}</span>
               <Chevron />
             </div>
           </div>
@@ -187,7 +185,7 @@ export function AccountScreen() {
 
       <div className="account-logout-wrap">
         <button type="button" className="btn-logout" disabled={busyOut} onClick={signOut}>
-          {t('account.signOut')}
+          {t('account.signOutFull')}
         </button>
         {outErr ? (
           <div className="account-center">

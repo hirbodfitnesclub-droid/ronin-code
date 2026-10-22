@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
 import { LanguageProvider } from './lib/i18n';
 import type { View } from './lib/view';
@@ -11,21 +11,39 @@ import { HistoryScreen } from './features/history/HistoryScreen';
 import { DevicesScreen } from './features/devices/DevicesScreen';
 import { AccountScreen } from './features/account/AccountScreen';
 
-/* Composition root: providers + auth guard + view routing by state. */
+const VIEWS: View[] = ['dashboard', 'buy', 'purchases', 'history', 'devices', 'account'];
+
+/** Screens talk to the root through optional props when given, and through
+    window events otherwise (logout / sign-out-all / cross-links). Both paths
+    land here. Navigate event detail may be a View string or {view}. */
 function Root() {
   const [view, setView] = useState<View>('dashboard');
   const [, setTick] = useState(0);
   const session = api.getSession();
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
-  void refresh;
 
-  if (!session) return <AuthScreen />;
+  useEffect(() => {
+    const onSession = () => refresh();
+    const onNavigate = (e: Event) => {
+      const d = (e as CustomEvent<unknown>).detail;
+      const v = typeof d === 'string' ? d : (d as { view?: unknown } | null)?.view;
+      if (typeof v === 'string' && (VIEWS as string[]).includes(v)) setView(v as View);
+    };
+    window.addEventListener('ronin:session-changed', onSession);
+    window.addEventListener('ronin:navigate', onNavigate);
+    return () => {
+      window.removeEventListener('ronin:session-changed', onSession);
+      window.removeEventListener('ronin:navigate', onNavigate);
+    };
+  }, [refresh]);
+
+  if (!session) return <AuthScreen onSessionChanged={refresh} />;
 
   return (
     <AppShell view={view} onNavigate={setView} userName={session.user.name ?? session.user.phone}>
-      {view === 'dashboard' && <DashboardScreen />}
-      {view === 'buy' && <BuyScreen />}
+      {view === 'dashboard' && <DashboardScreen onNavigate={setView} />}
+      {view === 'buy' && <BuyScreen onNavigate={setView} />}
       {view === 'purchases' && <PurchasesScreen />}
       {view === 'history' && <HistoryScreen />}
       {view === 'devices' && <DevicesScreen />}

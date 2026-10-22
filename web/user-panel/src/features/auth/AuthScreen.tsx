@@ -20,14 +20,6 @@ type Step = 'phone' | 'otp' | 'handoff';
 
 const RESEND_SECONDS = 60;
 
-/* Greeting strings for the return-code screen heading are not in the i18n
-   dictionary yet (reported as missing keys) — interim bilingual copy. */
-const SIGNED_IN: Record<'fa' | 'en', string> = { fa: 'ورودت کامل شد', en: 'You are signed in' };
-const FROM_APP_BANNER: Record<'fa' | 'en', string> = {
-  fa: 'این ورود برای اپ دسکتاپ رونین کده — بعد از ورود، کد بازگشت رو توی اپ وارد کن.',
-  en: 'This sign-in is for the Ronin Code desktop app — after signing in, enter the return code in the app.',
-};
-
 export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void } = {}) {
   const { t, lang, setLang } = useLang();
   const [fromApp] = useState<boolean>(detectFromApp);
@@ -146,7 +138,7 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
             ✓
           </div>
           <h1 className="page-title auth-center">{t('auth.returnCodeTitle')}</h1>
-          <p className="auth-center auth-done-text">{SIGNED_IN[lang]}</p>
+          <p className="auth-center auth-done-text">{t('auth.signedIn')}</p>
           <p className="page-sub auth-center">{t('auth.returnCodeHint')}</p>
           <div className="auth-return-label">{t('auth.returnCodeLabel')}</div>
           <div className="auth-return-row">
@@ -171,7 +163,7 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
           <>
             <h1 className="page-title auth-center">{t('auth.title')}</h1>
             <p className="page-sub auth-center">{t('auth.subtitle')}</p>
-            {fromApp ? <div className="auth-banner">{FROM_APP_BANNER[lang]}</div> : null}
+            {fromApp ? <div className="auth-banner">{t('auth.fromAppBanner')}</div> : null}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -234,7 +226,9 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
             </form>
             <div className="auth-otp-actions">
               {resendLeft > 0 ? (
-                <span className="auth-resend-wait">{t('auth.resendIn', { seconds: formatCountdown(resendLeft) })}</span>
+                <span className="auth-resend-wait">
+                  {t('auth.resendInClock', { time: formatCountdown(resendLeft) })}
+                </span>
               ) : (
                 <button type="button" className="auth-link" onClick={() => void resend()} disabled={sending}>
                   {t('auth.resend')}

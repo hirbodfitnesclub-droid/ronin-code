@@ -145,7 +145,7 @@ export function BuyScreen({ onNavigate }: { onNavigate?: (v: View) => void } = {
                         <span className="ltr-island">{fmtToman(pack.priceRials)}</span> {t('common.toman')}
                       </>
                     ) : (
-                      <span className="ltr-island">${fmtNum(pack.usd)}</span>
+                      <span className="ltr-island">{t('buy.usdPrice', { amount: fmtNum(pack.usd) })}</span>
                     )}
                   </span>
                   {pack.validityDays ? (

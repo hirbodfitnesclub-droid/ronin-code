@@ -6,14 +6,6 @@ import type { View } from '../../lib/view';
 import { WeekChart } from './WeekChart';
 import './dashboard.css';
 
-/* Interim bilingual strings — the dictionary has no greeting / active-devices
-   keys yet (reported as missing i18n keys). */
-const GREETING: Record<'fa' | 'en', string> = { fa: 'سلام', en: 'Hello' };
-const ACTIVE_DEVICES: Record<'fa' | 'en', (n: string) => string> = {
-  fa: (n) => `${n} دستگاه فعال`,
-  en: (n) => `${n} active devices`,
-};
-
 interface DashData {
   me: MeResult;
   status: AccountStatus;
@@ -23,7 +15,7 @@ interface DashData {
 }
 
 export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void } = {}) {
-  const { t, lang, fmtNum, fmtToman, fmtDate } = useLang();
+  const { t, fmtNum, fmtToman, fmtDate } = useLang();
   const [data, setData] = useState<DashData | null>(null);
   const [failed, setFailed] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
@@ -95,9 +87,7 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
   return (
     <div>
       <header className="dash-head">
-        <h1 className="page-title">
-          {GREETING[lang]}، {firstName}
-        </h1>
+        <h1 className="page-title">{t('dashboard.greeting', { name: firstName })}</h1>
         <p className="page-sub">{t('app.tagline')}</p>
       </header>
 
@@ -156,7 +146,9 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
         <h2 className="dash-card-title">{t('dashboard.planStatus')}</h2>
         <div className="dash-status-row">
           {status.isActive ? <Chip tone="green">{t('dashboard.active')}</Chip> : <Chip>{t('dashboard.inactive')}</Chip>}
-          <span className="dash-status-devices">{ACTIVE_DEVICES[lang](fmtNum(status.activeDevices))}</span>
+          <span className="dash-status-devices">
+            {t('dashboard.activeDevices', { count: fmtNum(status.activeDevices) })}
+          </span>
         </div>
         {expiringLot?.expiresAt ? (
           <p className="dash-expiry">

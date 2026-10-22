@@ -40,7 +40,10 @@ function StatusChip({ claim }: { claim: Claim }) {
 
 function ClaimRow({ claim }: { claim: Claim }) {
   const { t, fmtNum, fmtToman, fmtDate } = useLang();
-  const reason = claim.rejectReason ?? claim.adminNote;
+  /* The admin's human note is the user-visible reason; rejectReason may be a
+     machine code (e.g. receipt_unreadable) — never show raw codes to users. */
+  const rawReason = claim.adminNote ?? claim.rejectReason;
+  const reason = rawReason && !/^[a-z][a-z0-9_]*$/.test(rawReason) ? rawReason : t('purchases.rejectGeneric');
   return (
     <div className="purchases-row">
       <div className="purchases-row-main">
@@ -48,7 +51,7 @@ function ClaimRow({ claim }: { claim: Claim }) {
           <div className="purchases-pack">
             {claim.packTitle}
             {claim.hasReceipt ? (
-              <span className="purchases-receipt" title={t('buy.uploadReceipt')}>
+              <span className="purchases-receipt" title={t('purchases.receiptAttached')}>
                 <ReceiptIcon />
               </span>
             ) : null}
@@ -69,7 +72,7 @@ function ClaimRow({ claim }: { claim: Claim }) {
       {claim.status === 'approved' && claim.reviewedAt ? (
         <div className="purchases-note">{fmtDate(claim.reviewedAt)}</div>
       ) : null}
-      {claim.status === 'rejected' && reason ? (
+      {claim.status === 'rejected' ? (
         <div className="purchases-reject">
           <span className="purchases-reject-label">{t('purchases.rejectReason')}:</span>
           {reason}
