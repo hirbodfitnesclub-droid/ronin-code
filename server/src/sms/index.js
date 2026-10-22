@@ -17,8 +17,11 @@ export function createSms(cfg) {
   return {
     provider,
     outbox: provider.outbox ?? null,
-    /** OTP code — the template's %token% is the code itself (Liro semantics). */
-    sendOtp: (phone, code) => safe(() => provider.sendTemplate(phone, t.otp || 'ronin-otp', [code])),
+    /** OTP code — the template's %token% is the code itself. The template
+     *  name comes from env (KAVENEGAR_TEMPLATE) only — never hard-coded;
+     *  with no template configured the Kavenegar provider skips the send
+     *  (Shot's posture: OTP is off until key + template are both set). */
+    sendOtp: (phone, code) => safe(() => provider.sendTemplate(phone, t.otp, [code])),
     /** Sent after an admin approves a card-to-card order: token=tokens granted, token2=pack title. */
     sendPackageActivated: (phone, tokens, packTitle) =>
       safe(() => provider.sendTemplate(phone, t.packageActivated, [tokens, packTitle])),

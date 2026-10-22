@@ -1,8 +1,12 @@
 import { log } from '../log.js';
 /**
- * Kavenegar Verify Lookup provider (the only real SMS provider — Liro parity).
- * POST https://api.kavenegar.com/v1/{API_KEY}/verify/lookup.json
- * form-encoded: receptor, template, token (+ token2/token3 for multi-placeholder patterns).
+ * Kavenegar Verify Lookup provider — aligned to Shot's verified production
+ * implementation (api/_shot/auth.py `send_otp_sms`):
+ *   POST https://api.kavenegar.com/v1/{API_KEY}/verify/lookup.json
+ *   form-encoded: receptor (local 09xxxxxxxxx format), token (the OTP code),
+ *   template (env KAVENEGAR_TEMPLATE; Shot's template is named `Shot`).
+ *   Success ⇔ HTTP 200 AND response body `return.status === 200`.
+ * token2/token3 carry extra placeholders for multi-value patterns.
  * The API key lives in the URL path per Kavenegar's scheme and is NEVER logged.
  */
 export function createKavenegarProvider(cfg) {
@@ -25,7 +29,7 @@ export function createKavenegarProvider(cfg) {
     });
     const data = await res.json().catch(() => null);
     const status = data?.return?.status;
-    if (!res.ok || (status !== undefined && status !== 200)) {
+    if (!res.ok || status !== 200) {
       throw new Error(`Kavenegar send failed (http ${res.status}, status ${status ?? 'n/a'})`);
     }
     return { ok: true };

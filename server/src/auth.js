@@ -88,15 +88,16 @@ async function killGotrueSession(db, sessionId) {
 
 // ── OTP: request ────────────────────────────────────────────────────────────
 export async function requestOtp(db, cfg, { phone, ip = '' }) {
-  // Send rate limits: 60s cooldown, 5/day per phone, 20/day per IP (anti SMS-pumping).
+  // Send rate limits (Shot's verified production posture): 60s cooldown,
+  // 6/day per phone, 15/day per IP (anti SMS-pumping).
   // Check + send + record happen in ONE transaction under a per-phone
   // advisory lock, and hits are recorded only after the Auth server actually
   // accepted the send — a GoTrue-side rejection (its own SMS limiter) must
   // not burn the user's cooldown budget.
   const limits = [
     { key: `otp:min:${phone}`, limit: 1, windowMs: minutes(1), error: () => tooMany('otp_cooldown', 'Please wait a minute before requesting a new code.') },
-    { key: `otp:day:${phone}`, limit: 5, windowMs: days(1), error: () => tooMany('otp_daily_limit', 'Daily code limit reached for this number.') },
-    ...(ip ? [{ key: `otp:ip:${ip}`, limit: 20, windowMs: days(1), error: () => tooMany('otp_ip_limit', 'Too many code requests from this network.') }] : []),
+    { key: `otp:day:${phone}`, limit: 6, windowMs: days(1), error: () => tooMany('otp_daily_limit', 'Daily code limit reached for this number.') },
+    ...(ip ? [{ key: `otp:ip:${ip}`, limit: 15, windowMs: days(1), error: () => tooMany('otp_ip_limit', 'Too many code requests from this network.') }] : []),
   ];
   await db.tx(async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`otp-send:${phone}`]);
