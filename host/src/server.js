@@ -31,10 +31,17 @@ import {
 } from "./config.js";
 
 import { loadUsage, saveUsage, keyIdOf, recordKeyUse, recordTurnUsage, sessionTotals } from "./usage.js";
+
 import { projectHash, walkProject, takeSnapshot, readManifest, diffAgainstManifest, listCheckpoints, createCheckpoint, restoreTree, checkpointsBase } from "./snapshots.js";
+
 import { unifiedDiff } from "./diff.js";
+
 import { projectZipBuffer } from "./publish.js";
+
 import { STARTER_HTML, STARTER_CSS, STARTER_JS } from "./starters.js";
+import { testProviderKey, buildAttempts, isFailoverError } from "./router.js";
+import { finalizeTurnUsage } from "./cost.js";
+import { resolveApproval, makeGuardExtension, collectSecretValues } from "./guard.js";
 
 const PORT = Number(process.env.PORT || 7331);
 
@@ -111,191 +118,6 @@ function safeJoin(base, rel) {
 
 // ---------- provider key test ----------
 
-async function testProviderKey(providerId, apiKey, baseUrl) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10_000);
-  try {
-    let url, headers = {};
-    if (providerId === "anthropic") {
-      url = "https://api.anthropic.com/v1/models";
-      headers = { "x-api-key": apiKey, "anthropic-version": "2023-06-01" };
-    } else if (providerId === "openai") {
-      url = "https://api.openai.com/v1/models";
-      headers = { Authorization: `Bearer ${apiKey}` };
-    } else if (providerId === "google") {
-      url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
-    } else if (providerId === "openrouter") {
-      url = "https://openrouter.ai/api/v1/models";
-      headers = { Authorization: `Bearer ${apiKey}` };
-    } else if (providerId === "custom") {
-      const base = typeof baseUrl === "string" && baseUrl ? baseUrl.replace(/\/+$/, "") : null;
-      if (!base) return { ok: false, message: "Set the endpoint URL for the custom provider first." };
-      url = `${base}/models`;
-      headers = { Authorization: `Bearer ${apiKey}` };
-    } else {
-      return { ok: false, message: `Unknown provider: ${providerId}` };
-    }
-    const resp = await fetch(url, { headers, signal: ctrl.signal });
-    if (resp.ok) return { ok: true, message: "Connection succeeded — the API key works." };
-    if (resp.status === 401 || resp.status === 403)
-      return { ok: false, message: "The provider rejected this API key. Check the key and try again." };
-    return { ok: false, message: `The provider responded with status ${resp.status}. Please try again.` };
-  } catch (e) {
-    if (e && e.name === "AbortError") return { ok: false, message: "The connection test timed out after 10 seconds." };
-    return { ok: false, message: "Could not reach the provider. Check your network connection and try again." };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// ---------- starter project ----------
-
-function pickKey(providerId, auth, exclude = new Set()) {
-  const keys = keyList(auth[providerId]);
-  const usage = loadUsage();
-  const usable = keys.filter((k) => {
-    if (exclude.has(k)) return false;
-    const s = usage.keys[`${providerId}:${keyIdOf(k)}`];
-    return !(s && typeof s.cooldownUntil === "number" && s.cooldownUntil > Date.now());
-  });
-  if (!usable.length) return null;
-  usable.sort((a, b) => {
-    const sa = usage.keys[`${providerId}:${keyIdOf(a)}`];
-    const sb = usage.keys[`${providerId}:${keyIdOf(b)}`];
-    return (sa?.lastUsedAt || 0) - (sb?.lastUsedAt || 0);
-  });
-  return usable[0];
-}
-/** Ordered provider list for a turn: active provider first, then failover order. */
-
-function providerChain(primaryId) {
-  const order = [];
-  const push = (id) => { if (id && providerById(id) && !order.includes(id)) order.push(id); };
-  push(primaryId);
-  if (config.failover) for (const id of config.failoverOrder) push(id);
-  return order;
-}
-
-const isFailoverError = (msg) =>
-  /\b(429|500|502|503|504)\b|rate.?limit|quota|overloaded|too many requests|insufficient|capacity/i.test(msg || "");
-
-// ---------- RTK-style tool-output compression ----------
-
-const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\r/g;
-
-function compressToolText(text) {
-  if (typeof text !== "string" || text.length < 800) return { text, saved: 0 };
-  const original = text;
-  let t = text.replace(ANSI_RE, "");
-  // Collapse runs of blank lines.
-  t = t.replace(/\n{3,}/g, "\n\n");
-  // Dedupe consecutive repeated lines (log spam).
-  const lines = t.split("\n");
-  const deduped = [];
-  let prev = null, run = 0;
-  for (const line of lines) {
-    if (line === prev && line.trim()) { run++; continue; }
-    if (run > 0) deduped.push(`… (repeated ${run}×)`);
-    deduped.push(line);
-    prev = line; run = 0;
-  }
-  if (run > 0) deduped.push(`… (repeated ${run}×)`);
-  t = deduped.join("\n");
-  // Smart truncation: keep head + tail with a clear marker.
-  const MAX = 6000;
-  if (t.length > MAX) {
-    const head = t.slice(0, 3800);
-    const tail = t.slice(-1800);
-    const dropped = t.length - 5600;
-    t = `${head}\n… [${dropped} characters compressed by Ronin] …\n${tail}`;
-  }
-  const saved = Math.max(0, original.length - t.length);
-  if (saved > 0) {
-    const usage = loadUsage();
-    usage.rtk.calls += 1;
-    usage.rtk.originalChars += original.length;
-    usage.rtk.compressedChars += t.length;
-    saveUsage();
-  }
-  return { text: t, saved };
-}
-
-// ---------- secret redaction ----------
-
-const SECRET_PATTERNS = [
-  /\b(sk|rk)-[A-Za-z0-9_-]{16,}\b/g,                 // OpenAI-style keys
-  /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g,                  // Anthropic keys
-  /\bAIza[A-Za-z0-9_-]{20,}\b/g,                     // Google API keys
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,                 // GitHub tokens
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,               // Slack tokens
-  /\bAKIA[A-Z0-9]{16}\b/g,                           // AWS access keys
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /((?:api[_-]?key|secret|password|passwd|token)\s*[:=]\s*)["']?[^\s"']{8,}["']?/gi,
-];
-
-function redactSecrets(text) {
-  if (typeof text !== "string" || !text) return text;
-  let out = text;
-  for (const re of SECRET_PATTERNS) {
-    out = out.replace(re, (m, p1) => (p1 ? `${p1}"••••"` : "••••"));
-  }
-  return out;
-}
-
-function collectSecretValues() {
-  const vals = new Set();
-  const auth = loadAuth();
-  for (const v of Object.values(auth)) for (const k of keyList(v)) if (k.length >= 8) vals.add(k);
-  return [...vals];
-}
-
-function redactKnownSecrets(text, values) {
-  let out = redactSecrets(text);
-  for (const v of values || []) out = out.split(v).join("••••");
-  return out;
-}
-
-// ---------- .env protection ----------
-
-function isEnvPath(p, project) {
-  if (typeof p !== "string" || !p) return false;
-  const abs = path.resolve(project || getProject() || "/", p.startsWith("/") || /^[a-zA-Z]:/.test(p) ? p : path.join(project || "", p));
-  const base = path.basename(abs);
-  if (base === ".env.example" || base === ".env.sample" || base === ".env.template") return false;
-  return base === ".env" || base.startsWith(".env.");
-}
-
-function envAccessAllowed(project = getProject()) {
-  return project ? config.envAllowedProjects[path.resolve(project)] === true : false;
-}
-
-// ---------- approvals ----------
-
-const pendingApprovals = new Map(); // id -> { resolve, kind, detail }
-
-function requestApproval(kind, detail) {
-  const id = crypto.randomUUID();
-  broadcast({ type: "approval_request", approvalId: id, kind, detail });
-  return new Promise((resolve) => {
-    pendingApprovals.set(id, { resolve });
-    // Safety valve: never hang a turn forever.
-    setTimeout(() => {
-      if (pendingApprovals.delete(id)) resolve(false);
-    }, 10 * 60 * 1000);
-  });
-}
-
-function resolveApproval(id, approved) {
-  const p = pendingApprovals.get(id);
-  if (!p) return false;
-  pendingApprovals.delete(id);
-  broadcast({ type: "approval_resolved", approvalId: id, approved });
-  p.resolve(approved);
-  return true;
-}
-
-// ---------- turns ----------
-
 let turnRunning = false;
 
 let activitySeq = 0;
@@ -350,146 +172,6 @@ const TOOL_KIND = {
 // ---------- price table (server-side; GUI never prices anything) ----------
 // USD per 1M tokens. `multiplier` scales consumption (subscription-style
 // accounting, mirrored into cost so expensive models weigh more).
-
-const PRICE_TABLE = {
-  "claude-sonnet-4-5": { input: 3, output: 15, multiplier: 1 },
-  "gpt-5": { input: 1.25, output: 10, multiplier: 1 },
-  "gemini-2.5-pro": { input: 1.25, output: 10, multiplier: 1 },
-  "openai/gpt-5": { input: 1.25, output: 10, multiplier: 1 },
-};
-
-const DEFAULT_PRICE = { input: 0.5, output: 2, multiplier: 1 };
-
-function priceTurn(modelId, inputTokens, outputTokens, engineCost) {
-  if (typeof engineCost === "number" && engineCost > 0) {
-    return { costUsd: Math.round(engineCost * 1e6) / 1e6, estimated: false };
-  }
-  const p = PRICE_TABLE[modelId] || DEFAULT_PRICE;
-  const cost =
-    ((inputTokens * p.input + outputTokens * p.output) / 1_000_000) * (p.multiplier || 1);
-  return { costUsd: Math.round(cost * 1e6) / 1e6, estimated: true };
-}
-
-function finalizeTurnUsage({ providerId, modelId, apiKey, usage, promptText, replyText, error }) {
-  let inputTokens = usage?.input || 0;
-  let outputTokens = usage?.output || 0;
-  let estimated = false;
-  if (!inputTokens && !outputTokens) {
-    // Char-based estimate when the engine reported no usage.
-    inputTokens = Math.ceil((promptText || "").length / 4);
-    outputTokens = Math.ceil((replyText || "").length / 4);
-    estimated = true;
-  }
-  const { costUsd, estimated: priceEstimated } = priceTurn(modelId, inputTokens, outputTokens, usage?.costTotal);
-  const rec = {
-    ts: new Date().toISOString(),
-    provider: providerId,
-    model: modelId,
-    inputTokens,
-    outputTokens,
-    costUsd,
-    estimated: estimated || priceEstimated,
-  };
-  recordTurnUsage(rec);
-  if (apiKey) {
-    recordKeyUse(providerId, apiKey, {
-      error: !!error,
-      inputTokens,
-      outputTokens,
-      cooldownMs: error && /429|rate.?limit|quota/i.test(error) ? 90_000 : error && /5\d\d|overloaded/i.test(error) ? 30_000 : 0,
-    });
-  }
-  broadcast({
-    type: "turn_usage",
-    provider: providerId,
-    model: modelId,
-    inputTokens,
-    outputTokens,
-    costUsd,
-    estimated: rec.estimated,
-    sessionTotalUsd: sessionTotals().costUsd,
-  });
-  const cap = config.budgetCapUsd;
-  if (cap) {
-    const total = sessionTotals().costUsd;
-    if (total >= cap) broadcast({ type: "budget_exceeded", capUsd: cap, totalUsd: total });
-    else if (total >= cap * 0.8) broadcast({ type: "budget_warning", capUsd: cap, totalUsd: total });
-  }
-  return rec;
-}
-
-/**
- * Build the inline engine extension that enforces Ronin's trust layer:
- * approval gates, .env protection, secret redaction and RTK compression.
- * Runs inside the engine process via extensionFactories (see ENGINE.md).
- */
-
-function makeGuardExtension({ project, autoMode, secretValues }) {
-  const insideProject = (abs) => {
-    const rel = path.relative(path.resolve(project), abs);
-    return rel === "" || (!rel.startsWith(".." + path.sep) && !path.isAbsolute(rel));
-  };
-  const resolveArgPath = (p) =>
-    typeof p === "string" && p ? path.resolve(project, p) : null;
-  const envBlockedReason =
-    "Blocked by Ronin Code: .env files are protected because they usually hold secrets. " +
-    "If the user truly needs this, they can enable .env access for this project in Settings. Continue without it.";
-  const bashTouchesEnv = (cmd) =>
-    /(^|[\s;|&])(?:cat|less|more|head|tail|cp|mv|rm|source|\.|grep|sed|awk|tee)\s+[^|&;]*\.env(\.|\s|$|["'])/.test(cmd) &&
-    !/\.env\.(example|sample|template)/.test(cmd);
-
-  return (pi) => {
-    pi.on("tool_call", async (event) => {
-      const tool = event.toolName;
-      const input = event.input || {};
-      // --- .env protection (reads, writes, searches, shell) ---
-      if (!envAccessAllowed(project)) {
-        if ((tool === "read" || tool === "write" || tool === "edit") && isEnvPath(input.path, project)) {
-          return { block: true, reason: envBlockedReason };
-        }
-        if ((tool === "grep" || tool === "find" || tool === "ls") && input.path && isEnvPath(input.path, project)) {
-          return { block: true, reason: envBlockedReason };
-        }
-        if ((tool === "bash" || tool === "powershell") && typeof input.command === "string" && bashTouchesEnv(input.command)) {
-          return { block: true, reason: envBlockedReason };
-        }
-      }
-      // --- approval gate ---
-      if (autoMode) return undefined;
-      if (tool === "bash" || tool === "powershell") {
-        const ok = await requestApproval("command", {
-          tool,
-          command: String(input.command || "").slice(0, 600),
-          project,
-        });
-        if (!ok) return { block: true, reason: "The user declined this command in Ronin Code. Continue without running it, or ask what they would prefer." };
-      } else if (tool === "write" || tool === "edit") {
-        const abs = resolveArgPath(input.path);
-        if (abs && !insideProject(abs)) {
-          const ok = await requestApproval("write_outside", { tool, path: abs, project });
-          if (!ok) return { block: true, reason: "The user declined writing outside the project in Ronin Code. Keep changes inside the project folder." };
-        }
-      }
-      return undefined;
-    });
-
-    pi.on("tool_result", async (event) => {
-      if (!["bash", "powershell", "read", "grep", "find", "ls"].includes(event.toolName)) return undefined;
-      if (!Array.isArray(event.content)) return undefined;
-      let changed = false;
-      const content = event.content.map((part) => {
-        if (!part || part.type !== "text" || typeof part.text !== "string") return part;
-        let text = redactKnownSecrets(part.text, secretValues);
-        text = compressToolText(text).text;
-        if (text !== part.text) changed = true;
-        return { ...part, text };
-      });
-      return changed ? { content } : undefined;
-    });
-  };
-}
-
-/** One live attempt against one provider+key. Throws on engine/provider failure. */
 
 async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, manifest, autoMode, onProgress, state }) {
   // Embedded engine — actual installed SDK API (v1.3.0, see ENGINE.md).
@@ -659,31 +341,6 @@ async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, ma
 }
 
 /** Attempts list for a turn: primary provider keys (rotated), then failover providers. */
-
-function buildAttempts(auth) {
-  const attempts = [];
-  for (const providerId of providerChain(config.provider)) {
-    const keys = keyList(auth[providerId]);
-    if (!keys.length) continue;
-    const usage = loadUsage();
-    const sorted = [...keys].sort((a, b) => {
-      const sa = usage.keys[`${providerId}:${keyIdOf(a)}`];
-      const sb = usage.keys[`${providerId}:${keyIdOf(b)}`];
-      const ca = sa && sa.cooldownUntil > Date.now() ? 1 : 0;
-      const cb = sb && sb.cooldownUntil > Date.now() ? 1 : 0;
-      if (ca !== cb) return ca - cb;
-      return (sa?.lastUsedAt || 0) - (sb?.lastUsedAt || 0);
-    });
-    for (const apiKey of sorted) {
-      attempts.push({
-        providerId,
-        apiKey,
-        modelId: providerId === config.provider ? currentModel() : providerById(providerId).defaultModel,
-      });
-    }
-  }
-  return attempts.slice(0, 4);
-}
 
 let lastTurnDiff = null; // { project, manifest, changes } for the diff view
 
