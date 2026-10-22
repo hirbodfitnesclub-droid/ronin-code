@@ -1,18 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  api,
-  openStream,
-  type ActivityKind,
-  type ApprovalDetail,
-  type ChangedFile,
-  type PlanStep,
-  type Provider,
-  type Starter,
-  type Status,
-  type StreamEvent,
-} from './lib/api';
-import { LanguageProvider, makeLangCtx, type Lang } from './lib/i18n';
-import { apiErrorKey } from './lib/errors';
+import { useCallback, useMemo, useState } from 'react';
+import { type Starter } from './lib/api';
+import { LanguageProvider } from './lib/i18n';
+import { useSession } from './hooks/useSession';
+import { useChat } from './features/chat/useChat';
 import ActivityVisual from './components/ActivityVisual';
 import ApprovalCard from './components/ApprovalCard';
 import ChangesCard from './components/ChangesCard';
@@ -25,445 +15,76 @@ import PublishPanel from './components/PublishPanel';
 import SettingsModal from './components/SettingsModal';
 import RichText from './components/RichText';
 
-type TimelineItem =
-  | { kind: 'message'; id: number; role: 'user' | 'assistant' | 'error'; text: string }
-  | { kind: 'changes'; id: number; files: ChangedFile[]; undoing: boolean; undone: boolean; costUsd?: number; costEstimated?: boolean }
-  | { kind: 'approval'; id: number; approvalId: string; approvalKind: 'command' | 'write_outside'; detail: ApprovalDetail; resolved: boolean | null }
-  | { kind: 'plan'; id: number; planId: string; task: string; steps: PlanStep[]; status: 'pending' | 'building' | 'done' | 'rejected' };
-
-let nextId = 1;
-const id = () => nextId++;
-
+/* Ronin Code — app shell (composition root). Session state lives in
+   hooks/useSession, the chat state machine in features/chat/useChat;
+   this component wires them together and renders the layout. */
 export default function App() {
-  const [items, setItems] = useState<TimelineItem[]>([]);
-  const [input, setInput] = useState('');
-  const [running, setRunning] = useState(false);
-  const [activities, setActivities] = useState<Array<{ id: string; kind: ActivityKind }>>([]);
-  const [status, setStatus] = useState<Status | null>(null);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  /* ---------------- shell state ---------------- */
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [notice, setNotice] = useState('');
-  const [langOverride, setLangOverride] = useState<Lang | null>(null);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
-  const [sessionCost, setSessionCost] = useState(0);
   const [ideaOpen, setIdeaOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
   const [starters, setStarters] = useState<Starter[] | null>(null);
   const [startersOpen, setStartersOpen] = useState(false);
 
-  const runningRef = useRef(false);
-  const streamingIdRef = useRef<number | null>(null);
-  const pendingChangesRef = useRef<ChangedFile[]>([]);
-  const pendingUsageRef = useRef<{ costUsd: number; estimated: boolean } | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const invalidatePreview = useCallback(() => setPreviewKey((k) => k + 1), []);
+  const onStartersClose = useCallback(() => setStartersOpen(false), []);
 
-  const lang: Lang = langOverride ?? status?.language ?? 'en';
-  const ctx = useMemo(() => makeLangCtx(lang), [lang]);
-  const { t, fmtUsd } = ctx;
+  /* ---------------- session + chat ---------------- */
+  const sessionOpts = useMemo(
+    () => ({ setNotice, invalidatePreview, onStartersClose }),
+    [invalidatePreview, onStartersClose],
+  );
+  const session = useSession(sessionOpts);
+  const {
+    status, providers, sessionCost, lang, t, fmtUsd,
+    translateError, refreshMeta, setLangOverride,
+    openProject, createStarter, toggleAuto, togglePlan,
+  } = session;
 
+  const chatOpts = useMemo(
+    () => ({
+      t,
+      translateError,
+      setNotice,
+      refreshMeta,
+      invalidatePreview,
+      onSessionCost: session.setSessionCost,
+    }),
+    [t, translateError, refreshMeta, invalidatePreview, session.setSessionCost],
+  );
+  const chat = useChat(chatOpts);
+  const {
+    items, input, running, activities,
+    scrollRef, textareaRef,
+    send, undoChanges, decideApproval, approvePlan, rejectPlan,
+    onInputKeyDown, onInputChange,
+  } = chat;
+
+  /* ---------------- derived ---------------- */
   const mode = status?.mode ?? 'preview';
   const project = status?.project ?? '';
   const projectName = project.split(/[\\/]/).filter(Boolean).pop() ?? '';
   const showOnboarding = Boolean(status) && !status?.onboarded && !onboardingDismissed;
+  const isEmpty = items.length === 0 && !running;
+  const examples = [t('app.example1'), t('app.example2'), t('app.example3')];
 
-  const translateError = useCallback(
-    (err: unknown, fallbackKey: Parameters<typeof t>[0] = 'errors.unknown'): string => {
-      const key = apiErrorKey(err);
-      if (key) return t(key);
-      if (err instanceof Error && err.message) return err.message;
-      return t(fallbackKey);
-    },
-    [t],
-  );
-
-  /* Keep <html lang/dir> in sync so RTL mirroring follows the language. */
-  useEffect(() => {
-    document.documentElement.lang = lang;
-    document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
-  }, [lang]);
-
-  /* ---------------- initial load ---------------- */
-  const refreshMeta = useCallback(async () => {
-    const [p, s] = await Promise.allSettled([api.providers(), api.status()]);
-    if (p.status === 'fulfilled') setProviders(p.value);
-    if (s.status === 'fulfilled') setStatus(s.value);
-  }, []);
-
-  useEffect(() => {
-    void refreshMeta();
-  }, [refreshMeta]);
-
-  /* DEV-ONLY visual QA fixtures (stripped from production builds). */
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('devChanges')) {
-      setItems([
-        { kind: 'message', id: id(), role: 'user', text: 'Add a dark hero section with a signup form' },
-        { kind: 'message', id: id(), role: 'assistant', text: 'Done — the hero is live in the preview.' },
-        {
-          kind: 'changes', id: id(), undoing: false, undone: false,
-          files: [
-            { path: 'index.html', action: 'modified' },
-            { path: 'styles.css', action: 'modified' },
-            { path: 'hero.js', action: 'created' },
-          ],
-        },
-      ]);
-    }
-    const act = params.get('devActivity');
-    if (act) {
-      const kinds = act.split(',').filter(Boolean) as ActivityKind[];
-      setItems([{ kind: 'message', id: id(), role: 'user', text: 'Make it beautiful' }]);
-      setActivities(kinds.map((kind, i) => ({ id: `dev-${i}`, kind })));
-      runningRef.current = true;
-      setRunning(true);
-    }
-  }, []);
-
-  /* ---------------- streaming ---------------- */
-  const finishTurn = useCallback(
-    (errorMessage?: string) => {
-      runningRef.current = false;
-      setRunning(false);
-      setActivities([]);
-      streamingIdRef.current = null;
-
-      const files = pendingChangesRef.current;
-      pendingChangesRef.current = [];
-      const usage = pendingUsageRef.current;
-      pendingUsageRef.current = null;
-
-      setItems((prev) => {
-        let next = prev;
-        if (errorMessage) {
-          next = [...next, { kind: 'message', id: id(), role: 'error' as const, text: errorMessage }];
-        }
-        // A building plan completes with the turn.
-        next = next.map((it) =>
-          it.kind === 'plan' && it.status === 'building'
-            ? { ...it, status: 'done' as const, steps: it.steps.map((s) => ({ ...s, state: 'done' as const })) }
-            : it,
-        );
-        if (files.length > 0) {
-          next = [
-            ...next,
-            {
-              kind: 'changes', id: id(), files, undoing: false, undone: false,
-              ...(usage ? { costUsd: usage.costUsd, costEstimated: usage.estimated } : {}),
-            },
-          ];
-        }
-        return next;
-      });
-
-      setPreviewKey((k) => k + 1);
-      void refreshMeta();
-    },
-    [refreshMeta],
-  );
-
-  useEffect(() => {
-    const handle = (ev: StreamEvent) => {
-      /* The host broadcasts one shared stream; only the client that
-         started the turn consumes it. */
-      if (!runningRef.current) return;
-      switch (ev.type) {
-        case 'activity_start':
-          setActivities((prev) =>
-            prev.some((a) => a.id === ev.activityId)
-              ? prev
-              : [...prev, { id: ev.activityId, kind: ev.kind }],
-          );
-          break;
-        case 'activity_end':
-          setActivities((prev) => prev.filter((a) => a.id !== ev.activityId));
-          break;
-        case 'assistant_delta': {
-          if (streamingIdRef.current === null) streamingIdRef.current = id();
-          const sid = streamingIdRef.current;
-          setItems((prev) => {
-            const idx = prev.findIndex((it) => it.kind === 'message' && it.id === sid);
-            if (idx === -1) {
-              return [...prev, { kind: 'message', id: sid, role: 'assistant', text: ev.text }];
-            }
-            const next = [...prev];
-            const cur = next[idx];
-            if (cur.kind === 'message') {
-              next[idx] = { ...cur, text: cur.text + ev.text };
-            }
-            return next;
-          });
-          break;
-        }
-        case 'assistant_message': {
-          if (streamingIdRef.current === null) streamingIdRef.current = id();
-          const sid = streamingIdRef.current;
-          setItems((prev) => {
-            const idx = prev.findIndex((it) => it.kind === 'message' && it.id === sid);
-            if (idx === -1) {
-              return [...prev, { kind: 'message', id: sid, role: 'assistant', text: ev.text }];
-            }
-            const next = [...prev];
-            const cur = next[idx];
-            if (cur.kind === 'message') next[idx] = { ...cur, text: ev.text };
-            return next;
-          });
-          break;
-        }
-        case 'changes':
-          pendingChangesRef.current = [...pendingChangesRef.current, ...ev.files];
-          break;
-        case 'approval_request':
-          setItems((prev) => [
-            ...prev,
-            {
-              kind: 'approval', id: id(), approvalId: ev.approvalId,
-              approvalKind: ev.kind, detail: ev.detail, resolved: null,
-            },
-          ]);
-          break;
-        case 'approval_resolved':
-          setItems((prev) =>
-            prev.map((it) =>
-              it.kind === 'approval' && it.approvalId === ev.approvalId
-                ? { ...it, resolved: ev.approved }
-                : it,
-            ),
-          );
-          break;
-        case 'plan_proposed':
-          setItems((prev) => [
-            ...prev.map((it) =>
-              it.kind === 'plan' && it.status === 'pending' ? { ...it, status: 'rejected' as const } : it,
-            ),
-            { kind: 'plan', id: id(), planId: ev.planId, task: ev.task, steps: ev.steps, status: 'pending' },
-          ]);
-          break;
-        case 'plan_progress':
-          setItems((prev) =>
-            prev.map((it) =>
-              it.kind === 'plan' && it.planId === ev.planId ? { ...it, steps: ev.steps } : it,
-            ),
-          );
-          break;
-        case 'plan_cleared':
-          setItems((prev) =>
-            prev.map((it) =>
-              it.kind === 'plan' && it.planId === ev.planId ? { ...it, status: 'rejected' as const } : it,
-            ),
-          );
-          break;
-        case 'turn_usage':
-          pendingUsageRef.current = { costUsd: ev.costUsd, estimated: ev.estimated };
-          setSessionCost(ev.sessionTotalUsd);
-          break;
-        case 'provider_switched':
-          void refreshMeta();
-          break;
-        case 'budget_warning':
-          setNotice(t('cost.budgetWarn'));
-          break;
-        case 'budget_exceeded':
-          setNotice(t('cost.budgetHit'));
-          break;
-        case 'turn_done':
-          finishTurn();
-          break;
-        case 'turn_error':
-          finishTurn(ev.message || t('app.genericTurnError'));
-          break;
-      }
-    };
-
-    const source = openStream(handle);
-    return () => source.close();
-  }, [finishTurn, refreshMeta, t]);
-
-  /* ---------------- auto-scroll chat ---------------- */
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }, [items, activities, running]);
-
-  /* ---------------- actions ---------------- */
-  const send = useCallback(
-    async (raw?: string) => {
-      const prompt = (raw ?? input).trim();
-      if (!prompt || runningRef.current) return;
-      setInput('');
-      if (textareaRef.current) textareaRef.current.style.height = 'auto';
-      setItems((prev) => [...prev, { kind: 'message', id: id(), role: 'user', text: prompt }]);
-      pendingChangesRef.current = [];
-      streamingIdRef.current = null;
-      runningRef.current = true;
-      setRunning(true);
-      try {
-        await api.startTurn(prompt);
-      } catch (err) {
-        finishTurn(translateError(err, 'app.turnStartFailed'));
-      }
-    },
-    [input, finishTurn, translateError],
-  );
-
-  const undoChanges = async (itemId: number) => {
-    setItems((prev) =>
-      prev.map((it) => (it.kind === 'changes' && it.id === itemId ? { ...it, undoing: true } : it)),
-    );
-    try {
-      await api.undo();
-      setItems((prev) =>
-        prev.map((it) =>
-          it.kind === 'changes' && it.id === itemId ? { ...it, undoing: false, undone: true } : it,
-        ),
-      );
-      setPreviewKey((k) => k + 1);
-    } catch (err) {
-      setItems((prev) =>
-        prev.map((it) => (it.kind === 'changes' && it.id === itemId ? { ...it, undoing: false } : it)),
-      );
-      setNotice(translateError(err, 'app.undoFailed'));
-    }
-  };
-
-  const decideApproval = async (approvalId: string, approved: boolean) => {
-    setItems((prev) =>
-      prev.map((it) =>
-        it.kind === 'approval' && it.approvalId === approvalId ? { ...it, resolved: approved } : it,
-      ),
-    );
-    try {
-      await api.approval(approvalId, approved);
-    } catch {
-      /* host also resolves via its own timeout safety valve */
-    }
-  };
-
-  const approvePlan = async (planId: string) => {
-    try {
-      await api.planApprove(planId);
-      setItems((prev) =>
-        prev.map((it) => (it.kind === 'plan' && it.planId === planId ? { ...it, status: 'building' as const } : it)),
-      );
-      // The execution runs host-side; consume its stream like a normal turn.
-      runningRef.current = true;
-      setRunning(true);
-      streamingIdRef.current = null;
-      pendingChangesRef.current = [];
-    } catch (err) {
-      setNotice(translateError(err));
-    }
-  };
-
-  const rejectPlan = async (planId: string) => {
-    setItems((prev) =>
-      prev.map((it) => (it.kind === 'plan' && it.planId === planId ? { ...it, status: 'rejected' as const } : it)),
-    );
-    try {
-      await api.planReject(planId);
-    } catch {
-      /* non-fatal */
-    }
-  };
-
-  const openProject = async () => {
-    const path = window.prompt(t('app.openProjectPrompt'), project || '');
-    if (!path || !path.trim()) return;
-    setNotice('');
-    try {
-      const res = await api.selectProject(path.trim());
-      setStatus((prev) => (prev ? { ...prev, project: res.path } : prev));
-      setPreviewKey((k) => k + 1);
-      void refreshMeta();
-    } catch (err) {
-      setNotice(translateError(err, 'app.openProjectFailed'));
-    }
-  };
-
-  const createStarter = async (starterId?: string) => {
-    setNotice('');
-    try {
-      const res = await api.starterProject(starterId);
-      setStatus((prev) => (prev ? { ...prev, project: res.path } : prev));
-      setPreviewKey((k) => k + 1);
-      setStartersOpen(false);
-      void refreshMeta();
-    } catch (err) {
-      setNotice(translateError(err, 'app.starterFailed'));
-    }
-  };
-
+  /* ---------------- cross-feature actions ---------------- */
   const openStarters = async () => {
-    try {
-      setStarters(await api.starters());
-    } catch {
-      setStarters([]);
-    }
+    setStarters(await session.loadStarters());
     setStartersOpen(true);
   };
 
-  const toggleAuto = async () => {
-    if (!status) return;
-    const next = !status.autoMode;
-    try {
-      if (project) {
-        await api.saveSettings({ projectMode: next ? 'auto' : null });
-      } else {
-        await api.saveSettings({ autoMode: next });
-      }
-      void refreshMeta();
-    } catch {
-      /* non-fatal */
-    }
-  };
-
-  const togglePlan = async () => {
-    if (!status) return;
-    const next = !status.planMode;
-    try {
-      if (project) {
-        await api.saveSettings({ projectMode: next ? 'plan' : null });
-      } else {
-        await api.saveSettings({ planMode: next });
-      }
-      void refreshMeta();
-    } catch {
-      /* non-fatal */
-    }
-  };
-
   const onIdeaBuilt = (path: string, ideaText: string) => {
-    setStatus((prev) => (prev ? { ...prev, project: path } : prev));
-    setItems((prev) => [...prev, { kind: 'message', id: id(), role: 'user', text: ideaText }]);
-    pendingChangesRef.current = [];
-    streamingIdRef.current = null;
-    runningRef.current = true;
-    setRunning(true);
-    setPreviewKey((k) => k + 1);
+    session.setProjectPath(path);
+    chat.beginTurnUi(ideaText);
+    invalidatePreview();
     void refreshMeta();
   };
-
-  const onInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      void send();
-    }
-  };
-
-  const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    const el = e.target;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  };
-
-  const isEmpty = items.length === 0 && !running;
-  const examples = [t('app.example1'), t('app.example2'), t('app.example3')];
 
   return (
     <LanguageProvider lang={lang}>
