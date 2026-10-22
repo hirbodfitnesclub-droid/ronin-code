@@ -13,8 +13,10 @@ import os from "node:os";
 
 const HOST_PORT = 7331;
 const MOCK_PORT = 7411;
+const RONIN_PORT = 7412;
 const BASE = `http://127.0.0.1:${HOST_PORT}`;
 const MOCK = `http://127.0.0.1:${MOCK_PORT}`;
+const RONIN = `http://127.0.0.1:${RONIN_PORT}`;
 const TMP = "/tmp/ronin-e2e";
 const HOME = path.join(TMP, "home");
 const PROJECTS = path.join(TMP, "projects");
@@ -36,9 +38,21 @@ const mock = spawn("node", ["host/test/mock-provider.mjs"], {
   env: { ...process.env, MOCK_PORT: String(MOCK_PORT) },
   stdio: "pipe",
 });
+const ronin = spawn("node", ["host/test/mock-ronin.mjs"], {
+  cwd: path.resolve("host/.."),
+  env: { ...process.env, RONIN_STUB_PORT: String(RONIN_PORT) },
+  stdio: "pipe",
+});
 const host = spawn("node", ["host/src/server.js"], {
   cwd: path.resolve("host/.."),
-  env: { ...process.env, RONIN_HOME: HOME, RONIN_PROJECTS_DIR: PROJECTS, PORT: String(HOST_PORT) },
+  env: {
+    ...process.env,
+    RONIN_HOME: HOME,
+    RONIN_PROJECTS_DIR: PROJECTS,
+    PORT: String(HOST_PORT),
+    RONIN_SERVER_URL: RONIN,
+    RONIN_PANEL_URL: "http://127.0.0.1:5999",
+  },
   stdio: "pipe",
 });
 host.stderr.on("data", (d) => process.stderr.write(`[host] ${d}`));
@@ -104,6 +118,34 @@ async function waitEvent(type, timeoutMs = 30000, fromIndex = 0, filter = () => 
     if (Date.now() - t0 > timeoutMs) return null;
     await sleep(150);
   }
+}
+
+const roninControl = async (body) => {
+  await fetch(`${RONIN}/__control`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+};
+const roninRequests = async () => (await fetch(`${RONIN}/__requests`)).json();
+const roninState = async () => (await fetch(`${RONIN}/__state`)).json();
+
+// ---------- AUTH-A: turns are gated before login ----------
+{
+  const pre = await api("POST", "/api/turn", { prompt: "hello before login" });
+  check("AUTH-A: POST /api/turn before login -> 401 login_required",
+    pre.status === 401 && pre.json.error === "login_required", `status=${pre.status}`);
+}
+
+// ---------- AUTH-B: handoff exchange logs the host in ----------
+{
+  const login = await api("POST", "/api/auth/exchange-code", { code: "e2e-handoff" });
+  check("AUTH-B: exchange-code succeeds with the user", login.status === 200 && login.json.ok === true && login.json.user?.id === "u1");
+  const st = await api("GET", "/api/auth/state");
+  check("AUTH-B: /api/auth/state reports loggedIn + user",
+    st.json.loggedIn === true && st.json.user?.id === "u1");
+  check("AUTH-B: subscription cached from account-status",
+    st.json.subscription?.status === "active" && st.json.subscription?.deviceAuthorized === true);
 }
 
 // ---------- setup: custom provider + project ----------
@@ -225,7 +267,83 @@ if (apprI) await api("POST", `/api/approvals/${apprI.ev.approvalId}`, { approved
 await waitEvent("turn_done", 30000, mark);
 check("I: denied outside write did not happen", !fs.existsSync("/tmp/ronin-e2e/outside.txt"));
 
+// ---------- SUB-C: subscription turn through the metering proxy ----------
+await api("POST", "/api/settings", { enabledModels: ["gpt-6-luna"] });
+{
+  mark = events.length;
+  const accepted = await api("POST", "/api/turn", {
+    prompt: "Say hello via subscription",
+    modelId: "gpt-6-luna",
+    effort: "high",
+    fast: true,
+  });
+  check("SUB-C: subscription turn accepted", accepted.status === 200, `status=${accepted.status}`);
+  const doneSub = await waitEvent("turn_done", 60000, mark);
+  check("SUB-C: subscription turn completes", Boolean(doneSub));
+  const errSub = events.slice(mark).find((e) => e.type === "turn_error");
+  check("SUB-C: no turn_error on the subscription turn", !errSub, errSub ? JSON.stringify(errSub) : "");
+  const reqs = await roninRequests();
+  const last = reqs.proxy[reqs.proxy.length - 1];
+  check("SUB-C: proxy saw model + reasoning_effort + fast header",
+    Boolean(last) && last.body.model === "gpt-6-luna" && last.body.reasoning_effort === "high" && last.headers["x-ronin-fast"] === "1",
+    last ? `model=${last.body.model} effort=${last.body.reasoning_effort} fast=${last.headers["x-ronin-fast"]}` : "no proxy request");
+  const st = await api("GET", "/api/status");
+  check("SUB-C: status.activeModelId persisted", st.json.activeModelId === "gpt-6-luna", `activeModelId=${st.json.activeModelId}`);
+  check("SUB-C: status carries the auth slice", st.json.auth?.loggedIn === true && st.json.enabledModels?.includes("gpt-6-luna"));
+}
+
+// ---------- SUB-D: disabled subscription blocks sub turns, not BYOK ----------
+{
+  await roninControl({ account: { status: "disabled", isActive: false } });
+  await api("POST", "/api/auth/refresh-status", {});
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "subscription while disabled", modelId: "gpt-6-luna" });
+  const errD = await waitEvent("turn_error", 30000, mark, (e) => e.code === "subscription_locked");
+  check("SUB-D: subscription turn blocked with subscription_locked", Boolean(errD));
+  await api("POST", "/api/settings", { autoMode: true });
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "SCENARIO:bash CMD:touch LEGACY_OK" });
+  const doneLegacy = await waitEvent("turn_done", 30000, mark);
+  check("SUB-D: legacy BYOK turn still succeeds while subscription disabled",
+    Boolean(doneLegacy) && fs.existsSync(path.join(project, "LEGACY_OK")));
+  await roninControl({ account: { status: "active", isActive: true } });
+  await api("POST", "/api/auth/refresh-status", {});
+}
+
+// ---------- SUB-E: proxy 402 maps to insufficient_credit ----------
+{
+  await roninControl({ proxyMode: "402" });
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "subscription with no credit", modelId: "gpt-6-luna" });
+  const errE = await waitEvent("turn_error", 90000, mark, (e) => e.code === "insufficient_credit");
+  check("SUB-E: proxy 402 -> turn_error insufficient_credit", Boolean(errE));
+  await roninControl({ proxyMode: "ok" });
+}
+
+// ---------- SUB-F: refresh rotation persists the newest token ----------
+{
+  await roninControl({ tokenTtlSec: 30 });
+  await api("POST", "/api/auth/logout", {});
+  const relogin = await api("POST", "/api/auth/exchange-code", { code: "e2e-handoff-2" });
+  check("SUB-F: re-login with short-lived access token", relogin.status === 200 && relogin.json.ok === true);
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "subscription after rotation", modelId: "gpt-6-luna" });
+  const doneF2 = await waitEvent("turn_done", 60000, mark);
+  check("SUB-F: subscription turn succeeds after refresh rotation", Boolean(doneF2));
+  const stubState = await roninState();
+  const creds = JSON.parse(fs.readFileSync(path.join(HOME, "credentials.json"), "utf8"));
+  check("SUB-F: host persisted the newest refresh token",
+    creds.refreshToken === stubState.currentRefresh, `disk=${creds.refreshToken} stub=${stubState.currentRefresh}`);
+  check("SUB-F: refresh tokens rotated without reuse",
+    stubState.refreshSeen.length >= 2 && new Set(stubState.refreshSeen).size === stubState.refreshSeen.length,
+    `refreshSeen=${stubState.refreshSeen.join(",")}`);
+  const authState = await api("GET", "/api/auth/state");
+  check("SUB-F: still logged in after rotations", authState.json.loggedIn === true);
+  await roninControl({ tokenTtlSec: 3600 });
+}
+
 mock.kill();
+ronin.kill();
 host.kill();
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} checks passed`);
