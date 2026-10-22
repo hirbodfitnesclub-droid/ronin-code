@@ -230,6 +230,17 @@ export async function handleApi(req, res, url) {
     return sendJson(res, 200, { path: dir });
   }
 
+  if (route === "/api/client-error" && req.method === "POST") {
+    // Best-effort GUI crash reports (React ErrorBoundary). Metadata only;
+    // message/stack are length-capped before they reach the log.
+    const body = await readBody(req).catch(() => null);
+    log.error("client_error", {
+      message: String(body?.message ?? "unknown").slice(0, 500),
+      stack: body?.stack ? String(body.stack).slice(0, 2000) : undefined,
+    });
+    return sendJson(res, 200, { ok: true });
+  }
+
   if (route === "/api/undo" && req.method === "POST") {
     if (!getProject()) return sendJson(res, 400, { error: "No project is open, so there is nothing to undo", code: "no_project" });
     const manifest = await readManifest(getProject());

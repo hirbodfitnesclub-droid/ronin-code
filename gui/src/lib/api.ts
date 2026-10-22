@@ -234,6 +234,7 @@ export const api = {
   startTurn: (prompt: string) => post<{ ok: boolean; turnId: string }>('/api/turn', { prompt }),
 
   undo: () => post<{ ok: boolean; files: ChangedFile[] }>('/api/undo'),
+  logClientError: (payload: { message: string; stack?: string }) => post<{ ok: boolean }>('/api/client-error', payload),
 
   approval: (id: string, approved: boolean) =>
     post<{ ok: boolean }>(`/api/approvals/${encodeURIComponent(id)}`, { approved }),

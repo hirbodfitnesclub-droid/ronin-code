@@ -1,0 +1,24 @@
+/* ---------------- error boundary fallback ---------------- */
+.error-boundary {
+  height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.error-boundary-card {
+  max-width: 420px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 36px 32px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg-panel);
+}
+.error-boundary-card h1 { font-size: 20px; margin: 6px 0 0; }
+.error-boundary-card p { color: var(--text-dim); margin: 0; font-size: 14px; line-height: 1.6; }
+.error-boundary-alt { font-size: 12.5px !important; color: var(--text-faint) !important; }
+.error-boundary-card .btn { margin-top: 12px; }

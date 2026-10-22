@@ -4,6 +4,7 @@ import { LanguageProvider } from './lib/i18n';
 import { useSession } from './hooks/useSession';
 import { useChat } from './features/chat/useChat';
 import Header from './features/shell';
+import ErrorBoundary from './components/ui/ErrorBoundary';
 import ChatPanel from './features/chat/ChatPanel';
 import PreviewPanel from './features/preview';
 import StartersModal from './features/starters';
@@ -86,90 +87,92 @@ export default function App() {
   };
 
   return (
-    <LanguageProvider lang={lang}>
-      <div className="app">
-        <Header
-          project={project}
-          projectName={projectName}
-          sessionCost={sessionCost}
-          autoMode={Boolean(status?.autoMode)}
-          planMode={Boolean(status?.planMode)}
-          mode={mode}
-          model={status?.model}
-          onOpenProject={() => void openProject()}
-          onOpenStarters={openStarters}
-          onOpenIdea={() => setIdeaOpen(true)}
-          onOpenCheckpoints={() => setCheckpointsOpen(true)}
-          onOpenPublish={() => setPublishOpen(true)}
-          onToggleAuto={toggleAuto}
-          onTogglePlan={togglePlan}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
-
-        {notice && (
-          <div className="notice" role="alert">
-            <span>{notice}</span>
-            <button type="button" className="icon-btn" onClick={() => setNotice('')} aria-label={t('app.dismiss')}>
-              ×
-            </button>
-          </div>
-        )}
-
-        <main className={`main ${previewOpen ? '' : 'main--chat-only'}`}>
-          <ChatPanel chat={chat} mode={mode} onOpenStarters={openStarters} onOpenProject={() => void openProject()} />
-          <PreviewPanel
-            open={previewOpen}
+    <ErrorBoundary>
+      <LanguageProvider lang={lang}>
+        <div className="app">
+          <Header
             project={project}
-            previewKey={previewKey}
-            onRefresh={() => setPreviewKey((k) => k + 1)}
-            onSetOpen={setPreviewOpen}
+            projectName={projectName}
+            sessionCost={sessionCost}
+            autoMode={Boolean(status?.autoMode)}
+            planMode={Boolean(status?.planMode)}
+            mode={mode}
+            model={status?.model}
+            onOpenProject={() => void openProject()}
+            onOpenStarters={openStarters}
+            onOpenIdea={() => setIdeaOpen(true)}
+            onOpenCheckpoints={() => setCheckpointsOpen(true)}
+            onOpenPublish={() => setPublishOpen(true)}
+            onToggleAuto={toggleAuto}
+            onTogglePlan={togglePlan}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
-        </main>
 
-        <SettingsModal
-          open={settingsOpen}
-          providers={providers}
-          status={status}
-          onClose={() => setSettingsOpen(false)}
-          onSaved={() => void refreshMeta()}
-        />
+          {notice && (
+            <div className="notice" role="alert">
+              <span>{notice}</span>
+              <button type="button" className="icon-btn" onClick={() => setNotice('')} aria-label={t('app.dismiss')}>
+                ×
+              </button>
+            </div>
+          )}
 
-        <IdeaPanel
-          open={ideaOpen}
-          mode={mode}
-          onClose={() => setIdeaOpen(false)}
-          onBuilt={(path, ideaText) => onIdeaBuilt(path, ideaText)}
-        />
+          <main className={`main ${previewOpen ? '' : 'main--chat-only'}`}>
+            <ChatPanel chat={chat} mode={mode} onOpenStarters={openStarters} onOpenProject={() => void openProject()} />
+            <PreviewPanel
+              open={previewOpen}
+              project={project}
+              previewKey={previewKey}
+              onRefresh={() => setPreviewKey((k) => k + 1)}
+              onSetOpen={setPreviewOpen}
+            />
+          </main>
 
-        <PublishPanel open={publishOpen} projectName={projectName} onClose={() => setPublishOpen(false)} />
-
-        <CheckpointsPanel
-          open={checkpointsOpen}
-          onClose={() => setCheckpointsOpen(false)}
-          onRestored={() => setPreviewKey((k) => k + 1)}
-        />
-
-        <StartersModal
-          open={startersOpen}
-          starters={starters}
-          onClose={() => setStartersOpen(false)}
-          onPick={(starterId) => createStarter(starterId)}
-        />
-
-        {showOnboarding && (
-          <Onboarding
+          <SettingsModal
+            open={settingsOpen}
             providers={providers}
             status={status}
-            onLanguage={setLangOverride}
-            onDone={() => {
-              setOnboardingDismissed(true);
-              void refreshMeta();
-            }}
-            onCreateStarter={() => void createStarter()}
-            onOpenProject={() => void openProject()}
+            onClose={() => setSettingsOpen(false)}
+            onSaved={() => void refreshMeta()}
           />
-        )}
-      </div>
-    </LanguageProvider>
+
+          <IdeaPanel
+            open={ideaOpen}
+            mode={mode}
+            onClose={() => setIdeaOpen(false)}
+            onBuilt={(path, ideaText) => onIdeaBuilt(path, ideaText)}
+          />
+
+          <PublishPanel open={publishOpen} projectName={projectName} onClose={() => setPublishOpen(false)} />
+
+          <CheckpointsPanel
+            open={checkpointsOpen}
+            onClose={() => setCheckpointsOpen(false)}
+            onRestored={() => setPreviewKey((k) => k + 1)}
+          />
+
+          <StartersModal
+            open={startersOpen}
+            starters={starters}
+            onClose={() => setStartersOpen(false)}
+            onPick={(starterId) => createStarter(starterId)}
+          />
+
+          {showOnboarding && (
+            <Onboarding
+              providers={providers}
+              status={status}
+              onLanguage={setLangOverride}
+              onDone={() => {
+                setOnboardingDismissed(true);
+                void refreshMeta();
+              }}
+              onCreateStarter={() => void createStarter()}
+              onOpenProject={() => void openProject()}
+            />
+          )}
+        </div>
+      </LanguageProvider>
+    </ErrorBoundary>
   );
 }
