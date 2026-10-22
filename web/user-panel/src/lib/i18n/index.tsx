@@ -80,8 +80,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       dir: lang === 'fa' ? 'rtl' : 'ltr',
       setLang: setLangState,
       t: (key, vars) => interpolate(STRINGS[lang][key] ?? en[key] ?? key, vars),
-      fmtNum: (n) => formatNumber(n, locale),
-      fmtToman: (rials) => formatToman(rials, locale),
+      /* Amounts always render as Latin digits with comma grouping, inside mono
+         LTR islands — the board design. fa-IR's U+066C separator renders as a
+         fractured floating glyph in Vazirmatn/mono contexts. Dates stay local. */
+      fmtNum: (n) => formatNumber(n, 'en-US'),
+      fmtToman: (rials) => formatToman(rials, 'en-US'),
       fmtDate: (iso) => {
         const d = new Date(iso);
         return Number.isNaN(d.getTime()) ? iso : new Intl.DateTimeFormat(locale).format(d);
