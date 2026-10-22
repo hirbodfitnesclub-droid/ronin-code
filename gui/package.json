@@ -1,1 +1,24 @@
-{"dependencies":{"react":"^18.3.1","react-dom":"^18.3.1"},"devDependencies":{"@types/react":"^18.3.3","@types/react-dom":"^18.3.0","@vitejs/plugin-react":"^4.3.1","typescript":"^5.5.3","vite":"^5.4.0"},"name":"ronin-code-gui","private":true,"scripts":{"build":"tsc -b && vite build","dev":"vite --port 5173","preview":"vite preview --port 5173"},"type":"module","version":"0.1.0"}
+{
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.0"
+  },
+  "name": "ronin-code-gui",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite --port 5173",
+    "preview": "vite preview --port 5173",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc -b"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
