@@ -1,3 +1,4 @@
+import { log } from '../log.js';
 import { createKavenegarProvider } from './kavenegar.js';
 import { createConsoleProvider } from './console.js';
 
@@ -11,7 +12,7 @@ export function createSms(cfg) {
   const t = cfg.smsTemplates;
   const safe = async (fn) => {
     try { return await fn(); }
-    catch (e) { console.error('[sms] send failed:', e.message); return { error: e.message }; }
+    catch (e) { log.error('sms_send_failed', { error: e.message }); return { error: e.message }; }
   };
   return {
     provider,

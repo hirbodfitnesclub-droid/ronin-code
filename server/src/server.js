@@ -1,3 +1,4 @@
+import { log } from './log.js';
 import { loadDotEnv, loadConfig } from './config.js';
 import { openDb } from './db.js';
 import { createSms } from './sms/index.js';
@@ -23,9 +24,9 @@ function sweep() {
         if (user) void sms.sendExpired(user.phone, lot.tokens_left);
       },
     });
-    if (warned || expired) console.log(`[ronin] expiry sweep: warned=${warned} expired=${expired}`);
+    if (warned || expired) log.info('expiry_sweep', { warned, expired });
   } catch (e) {
-    console.error('[ronin] expiry sweep failed:', e.message);
+    log.error('expiry_sweep_failed', { error: e.message });
   }
 }
 sweep();
@@ -33,6 +34,6 @@ setInterval(sweep, 6 * 3_600_000).unref();
 
 const api = createUserApp(db, cfg, sms);
 const admin = createAdminApp(db, cfg, sms);
-api.listen(cfg.port, cfg.host, () => console.log(`[ronin] user API  → http://${cfg.host}:${cfg.port} (SMS: ${sms.provider.name})`));
-admin.listen(cfg.adminPort, cfg.host, () => console.log(`[ronin] admin app → http://${cfg.host}:${cfg.adminPort} (standalone, ADMIN_PHONES: ${cfg.adminPhones.length})`));
-if (!cfg.upstreamBaseUrl) console.warn('[ronin] UPSTREAM_BASE_URL not set — /v1/chat/completions will return 503 until configured.');
+api.listen(cfg.port, cfg.host, () => log.info('user_api_started', { host: cfg.host, port: cfg.port, smsProvider: sms.provider.name }));
+admin.listen(cfg.adminPort, cfg.host, () => log.info('admin_started', { host: cfg.host, port: cfg.adminPort, adminPhones: cfg.adminPhones.length }));
+if (!cfg.upstreamBaseUrl) log.warn('upstream_not_configured', { note: '/v1/chat/completions will return 503 until configured' });

@@ -1,3 +1,4 @@
+import { log } from "./log.js";
 // Ronin Code — local host service.
 // The versioned local API the GUI talks to. Every route the GUI uses
 // lives here; transport concerns live in http.js / http-server.js.
@@ -316,7 +317,7 @@ export async function handleApi(req, res, url) {
     setTurnRunning(true);
     sendJson(res, 200, { ok: true });
     runTurn("", { kind: "executePlan", plan }).catch((e) => {
-      console.error("Ronin Code: planned turn failed:", cleanError(e));
+      log.error("planned_turn_failed", { error: cleanError(e) });
       setTurnRunning(false);
     });
     return;
@@ -365,7 +366,7 @@ export async function handleApi(req, res, url) {
     // The idea view already showed this plan — execution respects the
     // approval gate / Auto mode inside the turn itself.
     runTurn(task, { skipPlanGate: true }).catch((e) => {
-      console.error("Ronin Code: idea build failed:", cleanError(e));
+      log.error("idea_build_failed", { error: cleanError(e) });
       setTurnRunning(false);
     });
     return;
@@ -423,7 +424,7 @@ export async function handleApi(req, res, url) {
     const turnId = crypto.randomUUID();
     sendJson(res, 200, { ok: true, turnId });
     runTurn(body.prompt.trim()).catch((e) => {
-      console.error("Ronin Code: turn failed:", cleanError(e));
+      log.error("turn_request_failed", { error: cleanError(e) });
       setTurnRunning(false);
     });
     return;

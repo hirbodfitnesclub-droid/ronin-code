@@ -1,3 +1,4 @@
+import { log } from "./log.js";
 // Ronin Code — local host service.
 // Transport: static GUI serving, the live project preview, the
 // request gate (host + token), and the listener itself.
@@ -97,16 +98,16 @@ export function startHost() {
     }
     return sendJson(res, 404, { error: "Not found" });
   } catch (e) {
-    console.error("Ronin Code: request error:", cleanError(e));
+    log.error("request_error", { error: cleanError(e) });
     if (!res.headersSent) sendJson(res, 500, { error: "Something went wrong. Please try again." });
     else try { res.end(); } catch {}
   }
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Ronin Code host listening on http://127.0.0.1:${PORT}`);
-  console.log(`Ronin Code data directory: ${RONIN_HOME}`);
-  console.log(`Ronin Code mode: ${loadAuth()[config.provider] ? "live" : "preview"} (${config.provider} / ${currentModel()})`);
+  log.info("host_listening", { url: `http://127.0.0.1:${PORT}` });
+  log.info("host_starting", { dataDir: RONIN_HOME });
+  log.info("host_mode", { mode: loadAuth()[config.provider] ? "live" : "preview", provider: config.provider, model: currentModel() });
 });
   return server;
 }

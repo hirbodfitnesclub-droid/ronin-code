@@ -3,6 +3,7 @@
 // event mapping, one live attempt per provider+key, the failover loop,
 // preview turns, and the tools-free JSON prompt used by plan/idea.
 
+import { log } from "./log.js";
 import fs from "node:fs";
 import path from "node:path";
 import { ENGINE_DIR, SESSIONS_DIR } from "./paths.js";
@@ -262,7 +263,7 @@ export async function runLiveTurn(prompt, project, manifest, { autoMode, onProgr
       // Fail over only when nothing user-visible happened yet (no streamed
       // text, no tool ran) and the error looks like a provider problem.
       if (state.visible || !isFailoverError(msg) || i === attempts.length - 1) throw e;
-      console.error(`Ronin Code: ${a.providerId} failed (${msg}); failing over.`);
+      log.warn("provider_failed_failover", { provider: a.providerId, error: msg });
     }
   }
   if (lastError) throw lastError;

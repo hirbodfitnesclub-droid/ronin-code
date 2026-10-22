@@ -1,3 +1,4 @@
+import { log } from '../log.js';
 /**
  * Kavenegar Verify Lookup provider (the only real SMS provider — Liro parity).
  * POST https://api.kavenegar.com/v1/{API_KEY}/verify/lookup.json
@@ -9,7 +10,7 @@ export function createKavenegarProvider(cfg) {
     if (!cfg.kavenegarApiKey) throw new Error('KAVENEGAR_API_KEY is not configured');
     if (!template) return { skipped: true, reason: 'no_template_configured' };
     if (cfg.smsAllowlist.length && !cfg.smsAllowlist.includes(phone)) {
-      console.log(`[sms:kavenegar] allowlist valve — skipped real SMS to ${phone}`);
+      log.info('sms_allowlist_skip', { phone });
       return { skipped: true, reason: 'not_in_allowlist' };
     }
     const form = new URLSearchParams({ receptor: phone, template });

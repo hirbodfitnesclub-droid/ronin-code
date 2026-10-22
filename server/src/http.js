@@ -1,3 +1,4 @@
+import { log } from './log.js';
 import { HttpError } from './util.js';
 
 /** Minimal HTTP plumbing shared by the user API and the standalone admin app. */
@@ -69,7 +70,7 @@ export function withErrorHandling(handler) {
       if (res.writableEnded) return;
       if (e instanceof HttpError) sendJson(res, e.status, { error: { code: e.code, message: e.message } });
       else {
-        console.error('[http] unhandled error:', e);
+        log.error('unhandled_error', { error: e?.message ?? String(e) });
         sendJson(res, 500, { error: { code: 'internal', message: 'Internal server error.' } });
       }
     }

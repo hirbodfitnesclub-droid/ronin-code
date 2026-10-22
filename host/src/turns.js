@@ -1,3 +1,4 @@
+import { log } from "./log.js";
 // Ronin Code — local host service.
 // Turn orchestration: dispatch (preview/live), the plan-mode gate
 // (propose → approve → execute with live step progress), plan
@@ -61,7 +62,7 @@ export async function proposePlan(task, project) {
       };
     }
   } catch (e) {
-    console.error("Ronin Code: plan proposal failed:", cleanError(e));
+    log.error("plan_proposal_failed", { error: cleanError(e) });
   } finally {
     await activity.end();
   }
@@ -147,6 +148,9 @@ export async function matureIdea(idea, project) {
 // ---------- turn dispatch ----------
 
 export async function runTurn(prompt, opts = {}) {
+  const turnId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
+  log.info("turn_started", { turnId, kind: opts.kind ?? "turn" });
   const project = getProject();
   try {
     if (opts.kind === "executePlan" && opts.plan) {
@@ -170,7 +174,7 @@ export async function runTurn(prompt, opts = {}) {
       return;
     }
     let manifest = null;
-    try { manifest = await takeSnapshot(project); } catch (e) { console.error("Ronin Code: snapshot failed:", cleanError(e)); }
+    try { manifest = await takeSnapshot(project); } catch (e) { log.error("snapshot_failed", { error: cleanError(e) }); }
     const auth = loadAuth();
     if (!keyList(auth[config.provider]).length) {
       await runPreviewTurn();
@@ -178,9 +182,11 @@ export async function runTurn(prompt, opts = {}) {
       await runLiveTurn(prompt, project, manifest, { autoMode: effectiveAutoMode(project) });
     }
   } catch (e) {
+    log.error("turn_failed", { turnId, error: cleanError(e) });
     broadcast({ type: "turn_error", message: cleanError(e) || "Something went wrong during that turn. Please try again." });
   } finally {
     turnRunning = false;
+    log.info("turn_finished", { turnId, durationMs: Date.now() - startedAt });
   }
 }
 

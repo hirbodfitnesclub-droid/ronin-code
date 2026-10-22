@@ -1,3 +1,4 @@
+import { log } from './log.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,7 @@ export function loadConfig(overrides = {}) {
   if (!cfg.authSecret) {
     cfg.authSecret = crypto.randomBytes(32).toString('hex');
     cfg.authSecretEphemeral = true;
-    console.warn('[ronin] AUTH_SECRET is not set — generated an ephemeral one (OTP codes will not survive a restart).');
+    log.warn('auth_secret_ephemeral', { note: 'AUTH_SECRET not set — generated an ephemeral one (OTP codes will not survive a restart)' });
   }
   return cfg;
 }
