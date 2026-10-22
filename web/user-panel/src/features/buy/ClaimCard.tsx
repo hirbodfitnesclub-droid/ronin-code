@@ -100,13 +100,7 @@ export function ClaimCard({ pack, onGoPurchases }: { pack: Pack | null; onGoPurc
       <div className="buy-amount-row">
         <span>{t('buy.amountToPay')}</span>
         <strong>
-          {pack.priceRials > 0 ? (
-            <>
-              <span className="ltr-island">{fmtToman(pack.priceRials)}</span> {t('common.toman')}
-            </>
-          ) : (
-            <span className="ltr-island">${pack.usd}</span>
-          )}
+          <span className="ltr-island">{fmtToman(pack.priceRials)}</span> {t('common.toman')}
         </strong>
       </div>
 

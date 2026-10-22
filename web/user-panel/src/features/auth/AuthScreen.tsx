@@ -9,7 +9,6 @@ import {
   errorKeyFor,
   formatCountdown,
   formatPhoneDisplay,
-  generateReturnCode,
   isValidPhone,
   maskPhone,
   normalizeDigits,
@@ -31,6 +30,8 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
   const [verifying, setVerifying] = useState(false);
   const [resendLeft, setResendLeft] = useState(0);
   const [returnCode, setReturnCode] = useState('');
+  const [codeLeft, setCodeLeft] = useState(0);
+  const [gettingCode, setGettingCode] = useState(false);
   const [copied, setCopied] = useState(false);
   const reloadTimer = useRef<number | null>(null);
 
@@ -39,6 +40,13 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
     const id = window.setInterval(() => setResendLeft((s) => Math.max(0, s - 1)), 1000);
     return () => window.clearInterval(id);
   }, [step, resendLeft]);
+
+  /* Connection-code expiry countdown on the handoff screen. */
+  useEffect(() => {
+    if (step !== 'handoff' || !returnCode || codeLeft <= 0) return;
+    const id = window.setInterval(() => setCodeLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => window.clearInterval(id);
+  }, [step, returnCode, codeLeft]);
 
   useEffect(
     () => () => {
@@ -89,7 +97,10 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
       await api.verifyOtp(phone, code, deviceName());
       if (fromApp) {
         // Do NOT notify the shell — the handoff screen replaces entering it.
-        setReturnCode(generateReturnCode());
+        // The connection code itself is minted server-side on demand
+        // (issueHandoff) when the user taps the button there.
+        setReturnCode('');
+        setCodeLeft(0);
         setStep('handoff');
         return;
       }
@@ -104,6 +115,22 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
       setError(errorKeyFor(e));
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const issueCode = async () => {
+    if (gettingCode) return;
+    setError(null);
+    setGettingCode(true);
+    try {
+      const r = await api.issueHandoff();
+      setReturnCode(r.code);
+      setCodeLeft(r.expiresInSec);
+      setCopied(false);
+    } catch (e) {
+      setError(errorKeyFor(e));
+    } finally {
+      setGettingCode(false);
     }
   };
 
@@ -130,6 +157,7 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
   ) : null;
 
   if (step === 'handoff') {
+    const expired = Boolean(returnCode) && codeLeft <= 0;
     return (
       <div className="auth-wrap">
         <Card className="auth-card auth-panel">
@@ -140,13 +168,46 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
           <h1 className="page-title auth-center">{t('auth.returnCodeTitle')}</h1>
           <p className="auth-center auth-done-text">{t('auth.signedIn')}</p>
           <p className="page-sub auth-center">{t('auth.returnCodeHint')}</p>
-          <div className="auth-return-label">{t('auth.returnCodeLabel')}</div>
-          <div className="auth-return-row">
-            <span className="auth-return-code ltr-island">{returnCode}</span>
-            <button type="button" className="btn auth-copy-btn" onClick={copyReturnCode}>
-              {copied ? t('common.copied') : t('common.copy')}
+          {errorBox}
+          {!returnCode ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-block auth-submit"
+              onClick={() => void issueCode()}
+              disabled={gettingCode}
+            >
+              {gettingCode ? (
+                <>
+                  <Spinner /> {t('auth.gettingCode')}
+                </>
+              ) : (
+                t('auth.getConnectionCode')
+              )}
             </button>
-          </div>
+          ) : expired ? (
+            <>
+              <p className="auth-center auth-done-text">{t('auth.codeExpired')}</p>
+              <button
+                type="button"
+                className="btn btn-primary btn-block auth-submit"
+                onClick={() => void issueCode()}
+                disabled={gettingCode}
+              >
+                {gettingCode ? t('auth.gettingCode') : t('auth.regenerateCode')}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="auth-return-label">{t('auth.returnCodeLabel')}</div>
+              <div className="auth-return-row">
+                <span className="auth-return-code ltr-island">{returnCode}</span>
+                <button type="button" className="btn auth-copy-btn" onClick={copyReturnCode}>
+                  {copied ? t('common.copied') : t('common.copy')}
+                </button>
+              </div>
+              <p className="auth-center auth-hint">{t('auth.codeExpiresIn', { time: formatCountdown(codeLeft) })}</p>
+            </>
+          )}
         </Card>
       </div>
     );

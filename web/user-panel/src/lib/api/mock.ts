@@ -15,6 +15,7 @@ import type {
   Claim,
   CreditsResult,
   Device,
+  HandoffResult,
   MeResult,
   OnboardingInput,
   OtpVerifyResult,
@@ -190,5 +191,13 @@ export class MockApiClient implements PanelApi {
     await delay();
     this.requireSession();
     return MOCK_USAGE;
+  }
+
+  async issueHandoff(): Promise<HandoffResult> {
+    await delay();
+    this.requireSession();
+    const group = () =>
+      Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+    return { code: `RNC-${group()}-${group()}`, expiresInSec: 600 };
   }
 }

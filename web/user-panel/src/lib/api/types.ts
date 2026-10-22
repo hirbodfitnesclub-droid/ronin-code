@@ -69,11 +69,17 @@ export interface AccountStatus {
 export interface Pack {
   id: string;
   title: string;
-  usd: number;
   priceRials: number;
   validityDays: number;
   badge: string | null;
   tokens: number;
+}
+
+/** Server-issued one-time connection code for the desktop app
+    (POST /api/auth/handoff with the panel Bearer session). */
+export interface HandoffResult {
+  code: string;
+  expiresInSec: number;
 }
 
 export interface ShopCard {
@@ -195,4 +201,5 @@ export interface PanelApi {
   listClaims(): Promise<Claim[]>;
   createClaim(packId: string, receiptFile: File): Promise<Claim>;
   usageSummary(): Promise<UsageSummary>;
+  issueHandoff(): Promise<HandoffResult>;
 }

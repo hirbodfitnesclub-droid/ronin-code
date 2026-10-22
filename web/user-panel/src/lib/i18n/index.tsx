@@ -29,6 +29,8 @@ export const ERROR_CODE_KEYS: Record<string, StringKey> = {
   receipt_too_large: 'errors.receipt_too_large',
   not_found: 'errors.not_found',
   internal: 'errors.internal',
+  handoff_rate_limited: 'errors.handoff_rate_limited',
+  handoff_failed: 'errors.handoff_failed',
 };
 
 export interface LangCtx {

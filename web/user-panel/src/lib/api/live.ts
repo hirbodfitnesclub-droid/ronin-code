@@ -6,6 +6,7 @@ import type {
   Claim,
   CreditsResult,
   Device,
+  HandoffResult,
   MeResult,
   OnboardingInput,
   OrderRow,
@@ -173,6 +174,11 @@ export class LiveApiClient implements PanelApi {
 
   async usageSummary(): Promise<UsageSummary> {
     return deriveUsage(await this.credits());
+  }
+
+  /** Mint a one-time desktop connection code (Bearer session required). */
+  async issueHandoff(): Promise<HandoffResult> {
+    return this.post<HandoffResult>('/api/auth/handoff');
   }
 }
 

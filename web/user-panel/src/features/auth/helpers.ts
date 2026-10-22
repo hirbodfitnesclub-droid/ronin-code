@@ -62,23 +62,6 @@ export function errorKeyFor(e: unknown): StringKey {
   return 'errors.unknown';
 }
 
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-function codeGroup(): string {
-  const bytes = new Uint8Array(4);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
-}
-
-/**
- * PLACEHOLDER return code, generated client-side for display only.
- * PanelApi has NO handoff/return-code issuance method yet — the real code
- * must be issued and verified server-side (see builder report).
- */
-export function generateReturnCode(): string {
-  return `RNC-${codeGroup()}-${codeGroup()}`;
-}
-
 /** True when the panel was opened from the desktop app (?from=app, persisted). */
 export function detectFromApp(): boolean {
   try {
