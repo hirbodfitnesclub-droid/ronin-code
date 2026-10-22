@@ -1,0 +1,269 @@
+/* Dashboard feature — balance card, stats, 7-day chart, status, top models. */
+
+.dash-head {
+  margin-bottom: 4px;
+}
+
+.dash-balance {
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+  background:
+    radial-gradient(480px 220px at 50% -80px, rgba(229, 72, 77, 0.14), transparent 65%),
+    var(--bg-raised);
+  border-color: rgba(229, 72, 77, 0.28);
+  box-shadow: 0 18px 50px -24px var(--accent-glow);
+}
+
+.dash-balance-label {
+  color: var(--text-dim);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.dash-balance-value {
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1.15;
+  margin-top: 6px;
+  letter-spacing: 0.5px;
+}
+
+.dash-balance-unit {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.dash-spendable {
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.dash-toman {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 14.5px;
+}
+
+.dash-buy-btn {
+  margin-top: 18px;
+  padding: 11px 30px;
+  font-size: 14.5px;
+}
+
+.dash-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.dash-stats .card + .card {
+  margin-top: 0;
+}
+
+.dash-stat {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.dash-stat-icon {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(229, 72, 77, 0.25);
+  font-size: 18px;
+}
+
+.dash-stat-label {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.dash-stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.dash-card-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 14px;
+}
+
+.dash-empty-note {
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.week-chart-wrap {
+  width: 100%;
+}
+
+.week-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.week-chart-label {
+  fill: var(--text-faint);
+  font-size: 9.5px;
+  font-family: var(--font-fa);
+}
+
+.dash-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dash-status-devices {
+  color: var(--text-dim);
+  font-size: 13.5px;
+}
+
+.dash-expiry {
+  color: var(--amber);
+  font-size: 13.5px;
+  margin: 12px 0 0;
+}
+
+.dash-models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dash-model {
+  display: grid;
+  grid-template-columns: 26px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.dash-model-rank {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.dash-model-name {
+  font-size: 13.5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-model-tokens {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.dash-model-pct {
+  font-size: 13px;
+  font-weight: 700;
+  min-width: 38px;
+  text-align: right;
+}
+
+.dash-model-bar {
+  grid-column: 2 / -1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.dash-model-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+}
+
+.dash-error {
+  text-align: center;
+}
+
+.dash-error-text {
+  color: var(--text-dim);
+  margin: 0 0 16px;
+}
+
+/* Loading skeletons */
+
+.skeleton {
+  border-radius: var(--radius);
+  background: linear-gradient(100deg, var(--bg-panel) 40%, var(--bg-raised) 50%, var(--bg-panel) 60%);
+  background-size: 200% 100%;
+  animation: dash-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dash-pulse {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton-line {
+  height: 26px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.skeleton-wide {
+  width: min(320px, 70%);
+}
+
+.skeleton-balance {
+  height: 190px;
+}
+
+.skeleton-stat {
+  height: 86px;
+}
+
+.skeleton-chart {
+  height: 180px;
+  margin-top: 16px;
+}
+
+@media (max-width: 560px) {
+  .dash-stats {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .dash-balance-value {
+    font-size: 36px;
+  }
+
+  .dash-model {
+    grid-template-columns: 26px 1fr auto;
+  }
+
+  .dash-model-pct {
+    display: none;
+  }
+}

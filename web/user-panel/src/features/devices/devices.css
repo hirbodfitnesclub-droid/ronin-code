@@ -1,0 +1,20 @@
+/* Devices — one card per device + sign-out-all danger zone. */
+.devices-note { color: var(--text-dim); font-size: 13px; margin: -8px 0 16px; }
+.devices-head { display: flex; align-items: flex-start; gap: 14px; }
+.devices-icon {
+  width: 42px; height: 42px; flex: none; border-radius: var(--radius-sm); display: grid; place-items: center;
+  background: var(--bg-raised); border: 1px solid var(--border); color: var(--text-dim);
+}
+.devices-info { flex: 1; min-width: 0; }
+.devices-name { font-weight: 650; font-size: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.devices-meta { color: var(--text-dim); font-size: 12.5px; margin-top: 3px; }
+.devices-actions { margin-top: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.devices-confirm-text { color: var(--text-dim); font-size: 13px; width: 100%; }
+.btn-danger { background: var(--accent); color: #fff; }
+.btn-danger:hover { background: var(--accent-bright); }
+.btn-danger-outline { background: transparent; border-color: var(--accent-glow); color: var(--accent-bright); }
+.btn-danger-outline:hover { background: var(--accent-soft); }
+.devices-danger { border-color: var(--accent-glow); }
+.devices-danger-title { font-weight: 650; font-size: 15px; margin-bottom: 4px; }
+.devices-danger-note { color: var(--text-dim); font-size: 13px; margin-bottom: 14px; }
+.devices-center { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 28px 0; color: var(--text-dim); }

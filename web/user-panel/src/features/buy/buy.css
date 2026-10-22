@@ -1,0 +1,315 @@
+/* Buy feature — pack grid, shop card, receipt claim. */
+
+.buy-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-dim);
+  padding: 32px 0;
+}
+
+.buy-error-card {
+  text-align: center;
+}
+
+.buy-muted {
+  color: var(--text-dim);
+  margin: 0 0 12px;
+}
+
+.buy-card-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 14px;
+}
+
+/* Pack grid */
+
+.buy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.buy-pack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 22px 14px 16px;
+  text-align: center;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
+}
+
+.buy-pack:hover {
+  background: var(--bg-raised);
+}
+
+.buy-pack.is-selected {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 14px 38px -16px var(--accent-glow);
+}
+
+.buy-pack-badge {
+  position: absolute;
+  top: 10px;
+  inset-inline-end: 10px;
+}
+
+.buy-pack-icon {
+  color: var(--accent-bright);
+  margin-bottom: 7px;
+}
+
+.buy-pack-tokens {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.buy-pack-unit {
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.buy-pack-price {
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.buy-pack-validity {
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+.buy-pack-select {
+  margin-top: 12px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 5px 15px;
+}
+
+.buy-pack.is-selected .buy-pack-select {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Shop card */
+
+.buy-shopcard {
+  background:
+    radial-gradient(420px 180px at 85% -60px, rgba(229, 72, 77, 0.1), transparent 65%),
+    var(--bg-raised);
+}
+
+.buy-card-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.buy-card-label {
+  color: var(--text-dim);
+  font-size: 13px;
+  min-width: 86px;
+}
+
+.buy-card-value {
+  flex: 1;
+  font-weight: 650;
+  font-size: 15px;
+  letter-spacing: 0.4px;
+}
+
+.buy-copy-btn {
+  padding: 6px 14px;
+  font-size: 12.5px;
+  border-color: var(--border-strong);
+}
+
+/* Claim */
+
+.buy-amount-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 14px;
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+.buy-file-input {
+  display: none;
+}
+
+.buy-dropzone {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 28px 16px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.buy-dropzone:hover,
+.buy-dropzone.is-dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.buy-dropzone-icon {
+  font-size: 22px;
+  color: var(--accent-bright);
+}
+
+.buy-dropzone-title {
+  font-weight: 700;
+  font-size: 14.5px;
+}
+
+.buy-dropzone-hint {
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.buy-preview {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.buy-preview-img {
+  width: 74px;
+  height: 74px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  flex: none;
+}
+
+.buy-preview-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.buy-preview-name {
+  display: block;
+  font-size: 13px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 9px;
+  text-align: left;
+}
+
+.buy-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.buy-error {
+  background: rgba(229, 72, 77, 0.1);
+  border: 1px solid rgba(229, 72, 77, 0.35);
+  color: #ffb3b8;
+  border-radius: var(--radius-sm);
+  padding: 10px 13px;
+  font-size: 13px;
+  margin-top: 14px;
+}
+
+.buy-submit {
+  margin-top: 16px;
+  padding: 12px 18px;
+  font-size: 14.5px;
+}
+
+.buy-notes {
+  margin: 14px 0 0;
+  padding-inline-start: 18px;
+  color: var(--text-dim);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.buy-success {
+  text-align: center;
+}
+
+.buy-success-icon {
+  width: 52px;
+  height: 52px;
+  margin: 4px auto 13px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 23px;
+  color: var(--green);
+  background: rgba(70, 192, 122, 0.12);
+  border: 1px solid rgba(70, 192, 122, 0.4);
+}
+
+.buy-success-text {
+  font-weight: 650;
+  margin: 0 0 6px;
+}
+
+.buy-steps-list {
+  margin: 0;
+  padding-inline-start: 20px;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+}
+
+@media (max-width: 760px) {
+  .buy-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .buy-grid {
+    grid-template-columns: 1fr;
+  }
+}
