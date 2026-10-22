@@ -50,6 +50,29 @@ export interface Provider {
 
 export type ProjectMode = 'auto' | 'plan' | null;
 
+export interface AuthUser {
+  id: string;
+  phone: string;
+  name: string | null;
+}
+
+export interface SubscriptionInfo {
+  status: string;
+  balanceTokens: number;
+  spendableTokens: number;
+  deviceAuthorized: boolean;
+  checkedAt: string;
+  stale: boolean;
+}
+
+export interface AuthState {
+  loggedIn: boolean;
+  user?: AuthUser;
+  subscription?: SubscriptionInfo | null;
+}
+
+export type Theme = 'dark' | 'light';
+
 export interface Status {
   mode: Mode;
   provider: string;
@@ -64,6 +87,11 @@ export interface Status {
   envAccess: boolean;
   budgetCapUsd: number | null;
   failover: boolean;
+  auth: AuthState;
+  enabledModels: string[];
+  activeModelId: string | null;
+  theme: Theme;
+  panelUrl: string;
 }
 
 export interface PlanStep {
@@ -136,7 +164,12 @@ export type StreamEvent =
   | { type: 'assistant_message'; text: string }
   | { type: 'changes'; files: ChangedFile[] }
   | { type: 'turn_done' }
-  | { type: 'turn_error'; message: string }
+  | {
+      type: 'turn_error';
+      message: string;
+      /** Stable host code: 'insufficient_credit' | 'subscription_locked' | 'login_required' | … */
+      code?: string;
+    }
   | { type: 'approval_request'; approvalId: string; kind: 'command' | 'write_outside'; detail: ApprovalDetail }
   | { type: 'approval_resolved'; approvalId: string; approved: boolean }
   | { type: 'plan_proposed'; planId: string; task: string; steps: PlanStep[] }
@@ -210,6 +243,17 @@ export interface SettingsBody {
   failoverOrder?: string[];
   budgetCapUsd?: number | null;
   envAccess?: boolean;
+  enabledModels?: string[];
+  activeModelId?: string | null;
+  theme?: Theme;
+  panelUrl?: string;
+  roninServerUrl?: string;
+}
+
+export interface TurnOptions {
+  modelId?: string;
+  effort?: string;
+  fast?: boolean;
 }
 
 export const api = {
@@ -231,7 +275,23 @@ export const api = {
   starterProject: (starterId?: string) =>
     post<{ path: string }>('/api/projects/starter', starterId ? { starterId } : {}),
 
-  startTurn: (prompt: string) => post<{ ok: boolean; turnId: string }>('/api/turn', { prompt }),
+  startTurn: (prompt: string, opts: TurnOptions = {}) =>
+    post<{ ok: boolean; turnId: string }>('/api/turn', { prompt, ...opts }),
+
+  /* ---------------- account / auth (host ↔ Ronin server) ---------------- */
+  authState: () => get<AuthState>('/api/auth/state'),
+
+  openPanel: () => post<{ ok: boolean; url?: string }>('/api/auth/open-panel'),
+
+  exchangeCode: (code: string) => post<{ ok: boolean }>('/api/auth/exchange-code', { code }),
+
+  requestOtp: (phone: string) => post<{ ok: boolean }>('/api/auth/otp/request', { phone }),
+
+  verifyOtp: (phone: string, code: string) => post<{ ok: boolean }>('/api/auth/otp/verify', { phone, code }),
+
+  logout: () => post<{ ok: boolean }>('/api/auth/logout'),
+
+  refreshStatus: () => post<{ ok: boolean }>('/api/auth/refresh-status'),
 
   undo: () => post<{ ok: boolean; files: ChangedFile[] }>('/api/undo'),
   logClientError: (payload: { message: string; stack?: string }) => post<{ ok: boolean }>('/api/client-error', payload),
