@@ -1,0 +1,64 @@
+/* Onboarding feature — one short first-login screen. Reuses the auth
+   card chrome (.auth-wrap / .auth-panel / .auth-logo) and form primitives. */
+
+.ob-card {
+  width: 100%;
+  max-width: 430px;
+}
+
+.ob-field {
+  margin-bottom: 18px;
+}
+
+.ob-optional {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.ob-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ob-option {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 8px 15px;
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.ob-option:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ob-option.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.ob-start {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ob-start:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}

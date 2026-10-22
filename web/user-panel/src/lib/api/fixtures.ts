@@ -7,6 +7,11 @@ export const MOCK_USER: User = {
   name: 'علی محمدی',
   isActive: true,
   createdAt: '2026-09-01T10:00:00.000Z',
+  // Mock login exercises the first-login onboarding screen; submitting it
+  // flips this to true for the rest of the session.
+  onboarded: false,
+  acquisitionSource: null,
+  onboardingGoal: null,
 };
 
 export const MOCK_BALANCE = 1_250_000;

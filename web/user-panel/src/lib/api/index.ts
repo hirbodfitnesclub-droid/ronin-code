@@ -1,6 +1,6 @@
 import { LiveApiClient } from './live';
 import { MockApiClient } from './mock';
-import type { Claim, PanelApi } from './types';
+import type { Claim, OnboardingInput, PanelApi } from './types';
 
 export * from './types';
 export * from './errors';
@@ -22,6 +22,7 @@ class ClaimsAdapter implements PanelApi {
   logout = () => this.live.logout();
   logoutAll = () => this.live.logoutAll();
   me = () => this.live.me();
+  submitOnboarding = (i: OnboardingInput) => this.live.submitOnboarding(i);
   accountStatus = () => this.live.accountStatus();
   packs = () => this.live.packs();
   credits = () => this.live.credits();

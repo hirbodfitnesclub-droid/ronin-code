@@ -249,7 +249,7 @@ export const api = {
     get<{ users: AdminUser[] }>(`/admin-api/users${search ? `?search=${encodeURIComponent(search)}` : ''}`),
   user: (id: string) =>
     get<{
-      user: { id: string; phone: string; name: string | null; isActive: boolean; createdAt: number; lastLoginAt: number | null };
+      user: { id: string; phone: string; name: string | null; isActive: boolean; createdAt: number; lastLoginAt: number | null; onboarded: boolean; acquisitionSource: string | null; onboardingGoal: string | null };
       balanceTokens: number;
       ledger: LedgerEntry[];
       orders: Order[];

@@ -8,6 +8,22 @@ export interface User {
   name: string | null;
   isActive: boolean;
   createdAt: string;
+  onboarded: boolean;
+  acquisitionSource: string | null;
+  onboardingGoal: string | null;
+}
+
+/* First-login onboarding chips (single-select). Keys are what the server
+   stores (POST /api/me/onboarding validates against the same lists). */
+export const ACQUISITION_SOURCES = ['instagram', 'telegram', 'friend', 'google', 'youtube_aparat', 'other'] as const;
+export type AcquisitionSource = (typeof ACQUISITION_SOURCES)[number];
+export const ONBOARDING_GOALS = ['personal', 'freelance', 'business', 'learning', 'other'] as const;
+export type OnboardingGoal = (typeof ONBOARDING_GOALS)[number];
+
+export interface OnboardingInput {
+  name: string;
+  acquisitionSource: AcquisitionSource;
+  onboardingGoal?: OnboardingGoal | null;
 }
 
 export interface Session {
@@ -170,6 +186,7 @@ export interface PanelApi {
   logout(): Promise<void>;
   logoutAll(): Promise<void>;
   me(): Promise<MeResult>;
+  submitOnboarding(input: OnboardingInput): Promise<User>;
   accountStatus(): Promise<AccountStatus>;
   packs(): Promise<PacksResult>;
   credits(): Promise<CreditsResult>;

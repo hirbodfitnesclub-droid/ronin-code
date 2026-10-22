@@ -16,11 +16,13 @@ import type {
   CreditsResult,
   Device,
   MeResult,
+  OnboardingInput,
   OtpVerifyResult,
   PacksResult,
   PanelApi,
   Session,
   UsageSummary,
+  User,
 } from './types';
 
 const delay = () => new Promise((r) => setTimeout(r, 250));
@@ -91,6 +93,20 @@ export class MockApiClient implements PanelApi {
       spendableTokens: MOCK_BALANCE,
       isAdminPhone: false,
     };
+  }
+
+  async submitOnboarding(input: OnboardingInput): Promise<User> {
+    await delay();
+    this.requireSession();
+    const user: User = {
+      ...this.session!.user,
+      name: input.name,
+      acquisitionSource: input.acquisitionSource,
+      onboardingGoal: input.onboardingGoal ?? null,
+      onboarded: true,
+    };
+    this.setSession({ ...this.session!, user });
+    return user;
   }
 
   async accountStatus(): Promise<AccountStatus> {

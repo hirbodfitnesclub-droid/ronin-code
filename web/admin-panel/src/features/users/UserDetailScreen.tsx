@@ -7,13 +7,30 @@ import OrdersTable from '../orders/OrdersTable';
 import UserRiskDevices from './UserRiskDevices';
 
 interface Dossier {
-  user: { id: string; phone: string; name: string | null; isActive: boolean; createdAt: number; lastLoginAt: number | null };
+  user: { id: string; phone: string; name: string | null; isActive: boolean; createdAt: number; lastLoginAt: number | null; onboarded: boolean; acquisitionSource: string | null; onboardingGoal: string | null };
   balanceTokens: number;
   ledger: LedgerEntry[];
   orders: Order[];
   lots: Lot[];
   openRiskFlags: number;
 }
+
+/* Onboarding chip keys (user panel) → FA labels for the dossier. */
+const ACQUISITION_SOURCE_FA: Record<string, string> = {
+  instagram: 'اینستاگرام',
+  telegram: 'تلگرام',
+  friend: 'معرفی دوستان',
+  google: 'گوگل',
+  youtube_aparat: 'یوتیوب / آپارات',
+  other: 'سایر',
+};
+const ONBOARDING_GOAL_FA: Record<string, string> = {
+  personal: 'سایت / اپ شخصی',
+  freelance: 'کار فریلنسری',
+  business: 'کسب‌وکار',
+  learning: 'یادگیری',
+  other: 'سایر',
+};
 
 export default function UserDetailScreen({ id, session }: { id: string; session: Session }) {
   const [data, setData] = useState<Dossier | null>(null);
@@ -92,6 +109,14 @@ export default function UserDetailScreen({ id, session }: { id: string; session:
               <dd className="ltr mono">{user.phone}</dd>
               <dt>نام</dt>
               <dd>{user.name ?? '—'}</dd>
+              <dt>منبع آشنایی</dt>
+              <dd>{user.acquisitionSource ? (ACQUISITION_SOURCE_FA[user.acquisitionSource] ?? user.acquisitionSource) : '—'}</dd>
+              {user.onboardingGoal ? (
+                <>
+                  <dt>هدف استفاده</dt>
+                  <dd>{ONBOARDING_GOAL_FA[user.onboardingGoal] ?? user.onboardingGoal}</dd>
+                </>
+              ) : null}
               <dt>وضعیت</dt>
               <dd>
                 <span className={`badge ${user.isActive ? 'badge-active' : 'badge-inactive'}`}>

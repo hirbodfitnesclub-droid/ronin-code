@@ -4,6 +4,7 @@ import { LanguageProvider } from './lib/i18n';
 import type { View } from './lib/view';
 import { AppShell } from './features/shell/AppShell';
 import { AuthScreen } from './features/auth/AuthScreen';
+import { OnboardingScreen } from './features/onboarding/OnboardingScreen';
 import { DashboardScreen } from './features/dashboard/DashboardScreen';
 import { BuyScreen } from './features/buy/BuyScreen';
 import { PurchasesScreen } from './features/purchases/PurchasesScreen';
@@ -39,6 +40,10 @@ function Root() {
   }, [refresh]);
 
   if (!session) return <AuthScreen onSessionChanged={refresh} />;
+
+  // First-login onboarding gate: one short screen until the profile's
+  // onboarded flag flips (POST /api/me/onboarding updates the session user).
+  if (session.user.onboarded !== true) return <OnboardingScreen onSessionChanged={refresh} />;
 
   return (
     <AppShell view={view} onNavigate={setView} userName={session.user.name ?? session.user.phone}>

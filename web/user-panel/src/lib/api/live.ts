@@ -7,12 +7,14 @@ import type {
   CreditsResult,
   Device,
   MeResult,
+  OnboardingInput,
   OrderRow,
   OtpVerifyResult,
   PacksResult,
   PanelApi,
   Session,
   UsageSummary,
+  User,
 } from './types';
 
 const BASE: string = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -121,6 +123,12 @@ export class LiveApiClient implements PanelApi {
 
   me(): Promise<MeResult> {
     return this.get('/api/me');
+  }
+
+  async submitOnboarding(input: OnboardingInput): Promise<User> {
+    const r = await this.post<{ user: User }>('/api/me/onboarding', input);
+    if (this.session) this.setSession({ ...this.session, user: r.user });
+    return r.user;
   }
 
   accountStatus(): Promise<AccountStatus> {
