@@ -37,18 +37,20 @@ test('happy path: OTP login → order → admin approve → ledger credit', asyn
   assert.equal(order.cardLast4, undefined);
   assert.equal(order.reference, undefined);
 
-  // Admin queue sees it — with a signed receipt URL and no duplicate flag;
-  // the signed URL actually serves the uploaded bytes on the admin listener.
+  // Admin queue sees it — canonical admin shape (hasReceipt/duplicateReceipt,
+  // no receiptUrl), and the receipt bytes come from the session-guarded
+  // /admin-api/orders/:id/receipt endpoint.
   const queue = await req(stack.adminBase, '/admin-api/orders?status=pending', { cookie: admin.cookie });
   const queued = queue.json.orders.find((o) => o.id === order.id);
   assert.ok(queued);
-  assert.equal(queued.duplicateImage, false);
-  assert.ok(typeof queued.receiptUrl === 'string' && queued.receiptUrl.includes('/admin-api/receipt-file'));
-  const img = await fetch(stack.adminBase + queued.receiptUrl);
+  assert.equal(queued.hasReceipt, true);
+  assert.equal(queued.duplicateReceipt, false);
+  assert.equal(queued.receiptUrl, undefined);
+  const img = await fetch(`${stack.adminBase}/admin-api/orders/${order.id}/receipt`, { headers: { Cookie: admin.cookie } });
   assert.equal(img.status, 200);
   assert.ok(Buffer.from(await img.arrayBuffer()).equals(PNG_1PX));
-  const tampered = await fetch(stack.adminBase + queued.receiptUrl.replace(/sig=[^&]+/, 'sig=AAAA'));
-  assert.equal(tampered.status, 403);
+  const anon = await fetch(`${stack.adminBase}/admin-api/orders/${order.id}/receipt`);
+  assert.equal(anon.status, 401);
   const review = await req(stack.adminBase, `/admin-api/orders/${order.id}/review`, {
     method: 'POST', cookie: admin.cookie, csrf: admin.csrf,
     body: { action: 'approve', receivedAmountRials: 50_000, note: 'ok' },
@@ -142,12 +144,12 @@ test('duplicate receipt image is flagged for the admin (passive flag only)', asy
   assert.ok(oa.id && ob.id && oc.id);
 
   const detailA = await req(stack.adminBase, `/admin-api/orders/${oa.id}`, { cookie: admin.cookie });
-  assert.equal(detailA.json.order.duplicateImage, true);
+  assert.equal(detailA.json.order.duplicateReceipt, true);
   const detailB = await req(stack.adminBase, `/admin-api/orders/${ob.id}`, { cookie: admin.cookie });
-  assert.equal(detailB.json.order.duplicateImage, true);
+  assert.equal(detailB.json.order.duplicateReceipt, true);
   const detailC = await req(stack.adminBase, `/admin-api/orders/${oc.id}`, { cookie: admin.cookie });
-  assert.equal(detailC.json.order.duplicateImage, false);
-  assert.ok(detailC.json.order.receiptUrl);
+  assert.equal(detailC.json.order.duplicateReceipt, false);
+  assert.equal(detailC.json.order.hasReceipt, true);
 
   // The flag changes nothing by itself: a flagged claim can still be approved.
   const review = await req(stack.adminBase, `/admin-api/orders/${oa.id}/review`, {

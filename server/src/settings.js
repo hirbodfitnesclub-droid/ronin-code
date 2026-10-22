@@ -67,6 +67,12 @@ export async function getMultiplier(db, cfg, model) {
   return Number(tokenConfig.defaultMultiplier ?? 1);
 }
 
+/** Raw models-table entry for a model (or null) — carries `enabled` (admin toggle). */
+export async function getModelEntry(db, cfg, model) {
+  const models = await getSetting(db, cfg, 'models');
+  return models.find((m) => m.model === model) ?? null;
+}
+
 export async function getModels(db, cfg) {
   return getSetting(db, cfg, 'models');
 }

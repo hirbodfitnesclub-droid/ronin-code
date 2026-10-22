@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { timingSafeEqualStr } from './util.js';
 
 /**
  * Receipt object storage — one contract, two backends.
@@ -12,10 +11,10 @@ import { timingSafeEqualStr } from './util.js';
  * publicly readable.
  *
  * Local dev/tests: no Storage service exists in the local stack, so objects
- * are files under cfg.receiptsDir with the SAME keys, and a "signed URL" is
- * an HMAC-signed path on the admin listener (`/admin-api/receipt-file`),
- * verified by the admin app before it streams the bytes. Same semantics:
- * short-lived, capability = the signature, no other access path.
+ * are files under cfg.receiptsDir with the SAME keys; the admin app reads
+ * the bytes back through `read()` and streams them itself. On Supabase the
+ * admin app instead 302-redirects to a short-lived signed URL. Either way
+ * receipts are never publicly readable.
  */
 
 export const RECEIPTS_BUCKET = 'receipts';
@@ -85,7 +84,6 @@ function supabaseStorage(cfg) {
       return out;
     },
     async read() { return null; }, // bytes are served by Supabase via signed URLs, never through us
-    verifySignedParams() { return false; },
   };
 }
 
@@ -97,7 +95,6 @@ function localStorage(cfg) {
     const file = path.resolve(root, key);
     return file.startsWith(root + path.sep) ? file : null; // path-escape guard
   };
-  const sign = (key, exp) => crypto.createHmac('sha256', cfg.authSecret).update(`${key}.${exp}`).digest('base64url');
   return {
     name: 'local',
     async put(key, buffer) {
@@ -111,25 +108,14 @@ function localStorage(cfg) {
       const file = fileFor(key);
       if (file) await fs.promises.rm(file, { force: true }).catch(() => {});
     },
-    async signedUrls(keys, expiresInSec) {
-      const exp = Math.floor(Date.now() / 1000) + expiresInSec;
-      const out = new Map();
-      for (const key of keys) {
-        out.set(key, `/admin-api/receipt-file?key=${encodeURIComponent(key)}&exp=${exp}&sig=${sign(key, exp)}`);
-      }
-      return out;
-    },
+    // No signed URLs on the local backend: the admin app streams the bytes
+    // itself via read() (see GET /admin-api/orders/:id/receipt).
+    async signedUrls() { return new Map(); },
     async read(key) {
       const file = fileFor(key);
       if (!file || !fs.existsSync(file)) return null;
       const buffer = await fs.promises.readFile(file);
       return { buffer, contentType: MIME_BY_EXT[path.extname(file).toLowerCase()] ?? 'application/octet-stream' };
-    },
-    /** Verify a local signed URL's params (used by the admin receipt-file route). */
-    verifySignedParams(key, exp, sig) {
-      if (!key || !exp || !sig) return false;
-      if (Number(exp) < Math.floor(Date.now() / 1000)) return false;
-      return timingSafeEqualStr(String(sig), sign(key, exp));
     },
   };
 }

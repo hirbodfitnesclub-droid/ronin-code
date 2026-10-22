@@ -1,10 +1,12 @@
-import { sha256Hex, randomToken, forbidden, unauthorized, isAdminPhone } from '../util.js';
+import { sha256Hex, randomToken, forbidden, unauthorized } from '../util.js';
 import * as otp from './otp.js';
+import { isAdminOrStaff } from './caps.js';
 
 /**
  * Admin authentication — a SEPARATE domain from user auth:
- *  - OTP login restricted to phones in ADMIN_PHONES (Liro owner semantics),
- *    codes issued/verified by the admin-domain OTP module (not Supabase Auth).
+ *  - OTP login restricted to the owner (ADMIN_PHONES) and finance staff
+ *    (settings `finance_staff`), codes issued/verified by the admin-domain
+ *    OTP module (not Supabase Auth). Capabilities are enforced per route.
  *  - Sessions live in `admin_sessions`, transported by the `ronin_admin` cookie.
  *  - User access/refresh tokens are never accepted here, and admin session
  *    tokens are meaningless on the user API (different tables, different checks).
@@ -14,13 +16,15 @@ import * as otp from './otp.js';
 export const ADMIN_COOKIE = 'ronin_admin';
 export const ADMIN_SESSION_TTL_MS = 12 * 3_600_000; // 12 hours
 
-export function requestAdminOtp(db, cfg, sms, { phone, ip = '' }) {
-  if (!isAdminPhone(cfg, phone)) throw forbidden('not_an_admin', 'This phone number is not an admin.');
+export async function requestAdminOtp(db, cfg, sms, { phone, ip = '' }) {
+  // Owner (ADMIN_PHONES) or finance staff (settings) may log in; caps are
+  // enforced per-route afterwards (see caps.js).
+  if (!(await isAdminOrStaff(db, cfg, phone))) throw forbidden('not_an_admin', 'This phone number is not an admin.');
   return otp.requestOtp(db, cfg, sms, { phone, ip });
 }
 
 export async function loginAdminWithOtp(db, cfg, { phone, code }) {
-  if (!isAdminPhone(cfg, phone)) throw forbidden('not_an_admin', 'This phone number is not an admin.');
+  if (!(await isAdminOrStaff(db, cfg, phone))) throw forbidden('not_an_admin', 'This phone number is not an admin.');
   await otp.verifyOtp(db, cfg, { phone, code });
   const token = randomToken(32);
   const csrfToken = randomToken(24);

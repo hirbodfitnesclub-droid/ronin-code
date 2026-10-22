@@ -11,8 +11,8 @@ import { receiptKey, sha256Hex } from './storage.js';
  *  panel → approve (entering the actually-received amount; partial credit if
  *  it differs) or reject with a user-visible reason + internal note.
  * There are NO claim form fields. The image's SHA-256 is stored so the admin
- * list/detail can flag `duplicateImage` when the same photo appears on more
- * than one claim — a passive flag only; the human decides.
+ * list/detail can flag `duplicateReceipt` when the same photo appears on
+ * more than one claim — a passive flag only; the human decides.
  * Approval is ONE atomic, idempotent RPC (approve_claim): a second review
  * gets a 409 and can never double-credit.
  */
@@ -134,24 +134,3 @@ export function publicOrder(o, extras = {}) {
   };
 }
 
-/**
- * Admin view of claims: publicOrder + a short-lived signed receipt URL +
- * `duplicateImage` (the same image_sha256 exists on at least one OTHER
- * claim). The flag is informational only — the owner reviews personally.
- */
-export async function adminOrders(db, cfg, storage, rows) {
-  if (!rows.length) return [];
-  const keys = [...new Set(rows.map((o) => o.receipt_path).filter(Boolean))];
-  const urls = keys.length ? await storage.signedUrls(keys, cfg.receiptUrlTtlSec) : new Map();
-  const hashes = [...new Set(rows.map((o) => o.image_sha256).filter(Boolean))];
-  const dupRows = hashes.length
-    ? await db.many(
-      'SELECT image_sha256 FROM public.orders WHERE image_sha256 = ANY($1) GROUP BY image_sha256 HAVING count(*) > 1',
-      [hashes])
-    : [];
-  const dupSet = new Set(dupRows.map((r) => r.image_sha256));
-  return rows.map((o) => publicOrder(o, {
-    receiptUrl: o.receipt_path ? urls.get(o.receipt_path) ?? null : null,
-    duplicateImage: Boolean(o.image_sha256 && dupSet.has(o.image_sha256)),
-  }));
-}

@@ -162,9 +162,47 @@ sending (dev/tests; codes are also kept in an in-memory outbox for tests).
 
 Admin API lives under `/admin-api/*` **on the admin listener only** (overview,
 users + charge/toggle, orders queue + review, settings: card/packs/models/
-token-config, audit). Order list/detail responses add `receiptUrl`
-(short-lived signed URL for the receipt photo) and `duplicateImage`
-(boolean — same photo on another claim; informational only).
+token-config, audit). Order list/detail responses add `hasReceipt` and
+`duplicateReceipt` (boolean — same photo on another claim; informational
+only); the receipt image itself is served by
+`GET /admin-api/orders/:id/receipt`.
+
+## Admin panel (React console, PRD §6)
+
+The standalone admin app serves the React console built from
+`web/admin-panel/` (Vite build output in `web/admin-panel/dist`, Persian RTL,
+same design tokens as the product). It replaces the old vanilla UI.
+
+- **Access (Liro capability model):** OWNER = phone in `ADMIN_PHONES` (all
+  capabilities; claim approval, staff editing and the audit viewer are
+  owner-only). FINANCE STAFF live in the `finance_staff` settings document
+  (`[{phone, caps[]}]`) and log in with the same OTP; every route enforces its
+  capability server-side: `finance_view`, `finance_user`, `risk_manage`,
+  `expense_write`, `refund_write`, `policy_write`, `export`. (Liro's
+  referral/KYC/payout caps do not exist — there is no referral system,
+  PRD §9.1.) Every sensitive action writes an `admin_audit` row.
+- **Review queue + receipts:** claims carry `receipt_path` + `image_sha256`
+  (migration `20261022000003_receipt_claims.sql`; refund/finance/risk tables
+  in `20261022000004_admin_panel.sql`). `GET /admin-api/orders/:id/receipt`
+  serves the image through `src/storage.js` — streamed from the local
+  `RECEIPTS_DIR` (dev) or as a 302 to a short-lived signed URL into the
+  private Supabase Storage bucket (Cloud, service-role key stays
+  server-side). The queue flags claims whose image hash also appears on
+  another claim (passive duplicate warning — the human still decides).
+- **Refunds:** `POST /admin-api/orders/:id/refund` → `refund_order` RPC:
+  atomic, idempotent on the client-supplied key, proportional token removal
+  capped at the order remainder and at the user's balance; a full refund
+  flips the order to `refunded`.
+- **Finance console:** P&L over orders/refunds/expenses, expenses CRUD,
+  named periods, CSV export — deliberately **no** bank-statement
+  import/reconciliation (owner decision, PRD §9.2).
+- **Analytics + AI analyst:** dashboards from the books (growth, revenue,
+  consumption, top models, claim outcomes) and an on-demand analyst chat
+  (`POST /admin-api/analyst/chat`) that ships aggregate context to the cheap
+  OpenAI-compatible gateway (`ANALYST_*`, falling back to `UPSTREAM_*`).
+  On-demand only — no cron, no daily reports (PRD §9.3).
+- **User dossier extras:** devices list + revoke, risk flags lifecycle —
+  driven by the same `devices` registry that powers daily revalidation.
 
 ## Honest gaps
 
@@ -189,7 +227,7 @@ token-config, audit). Order list/detail responses add `receiptUrl`
   future work — card-to-card is the launch rail, per the owner.
 - Receipt storage locally: the dev stack has no Supabase Storage service, so
   `src/storage.js` falls back to files under `RECEIPTS_DIR` with identical
-  object keys and HMAC-signed URLs served by the admin app. Migration 3
+  object keys; the admin app streams the bytes itself. Migration 3
   creates the real bucket + storage policies only where a `storage` schema
   exists (Supabase), and is a no-op elsewhere by design.
 - Duplicate-receipt detection is deliberately a **passive admin flag**

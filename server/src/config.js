@@ -53,16 +53,28 @@ export function loadConfig(overrides = {}) {
 
     // ── Receipt storage (card-to-card claim photos) ──────────────────────
     // Production: Supabase Storage — project base URL + service-role key;
-    // receipts live in the PRIVATE bucket `receipts` (migration 3).
-    supabaseUrl: (env.SUPABASE_URL || '').replace(/\/$/, ''),
+    // receipts live in the PRIVATE bucket `receipts` (migrations 3–4).
+    // The project URL is derived from the Auth URL when SUPABASE_URL is
+    // not set explicitly. The service-role key is used ONLY server-side
+    // (storage signed URLs); never logged, never sent to a browser.
+    supabaseUrl: (env.SUPABASE_URL || '').replace(/\/$/, '')
+      || (env.SUPABASE_AUTH_URL || '').replace(/\/auth\/v1\/?$/, '').replace(/\/$/, ''),
     supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY || '',
     // Local fallback (dev/tests, no Storage service): directory on disk that
     // honours the same object-key contract.
     receiptsDir: env.RECEIPTS_DIR || path.join(SERVER_DIR, 'data', 'receipts'),
     // Upload rules: images only, at most 5 MiB.
     receiptMaxBytes: int(env.RECEIPT_MAX_BYTES, 5 * 1024 * 1024),
-    // Lifetime of the signed receipt URLs handed to the admin panel.
+    // Lifetime of the signed receipt URLs minted for the admin panel.
     receiptUrlTtlSec: int(env.RECEIPT_URL_TTL_SECONDS, 600),
+
+    // ── Admin panel extras (PRD §6) ──────────────────────────────────────
+    // AI analyst chat (admin, on-demand only): an OpenAI-compatible gateway.
+    // Falls back to the metering upstream config (resolved after overrides
+    // are merged, below) when not set separately.
+    analystBaseUrl: (env.ANALYST_BASE_URL || '').replace(/\/$/, ''),
+    analystApiKey: env.ANALYST_API_KEY || '',
+    analystModel: env.ANALYST_MODEL || 'deepseek-v4.1-flash',
 
     authSecret: env.AUTH_SECRET || '',
     adminPhones: list(env.ADMIN_PHONES),
@@ -89,6 +101,8 @@ export function loadConfig(overrides = {}) {
     chatMaxConcurrent: int(env.CHAT_MAX_CONCURRENT, 3),
     ...overrides,
   };
+  if (!cfg.analystBaseUrl) cfg.analystBaseUrl = cfg.upstreamBaseUrl;
+  if (!cfg.analystApiKey) cfg.analystApiKey = cfg.upstreamApiKey;
   if (!cfg.authSecret) {
     cfg.authSecret = crypto.randomBytes(32).toString('hex');
     cfg.authSecretEphemeral = true;
