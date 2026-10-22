@@ -88,8 +88,13 @@ export interface DiffFile {
 export interface UsageView {
   totals: { turns: number; inputTokens: number; outputTokens: number; costUsd: number };
   recent: Array<{
-    ts: string; provider: string; model: string;
-    inputTokens: number; outputTokens: number; costUsd: number; estimated: boolean;
+    ts: string;
+    provider: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    estimated: boolean;
   }>;
   rtk: { calls: number; savedChars: number };
   budgetCapUsd: number | null;
@@ -115,14 +120,7 @@ export interface ChangedFile {
 }
 
 export type ActivityKind =
-  | 'planning'
-  | 'thinking'
-  | 'reading'
-  | 'writing'
-  | 'editing'
-  | 'terminal'
-  | 'searching'
-  | 'reviewing';
+  'planning' | 'thinking' | 'reading' | 'writing' | 'editing' | 'terminal' | 'searching' | 'reviewing';
 
 export interface ApprovalDetail {
   tool: string;
@@ -144,7 +142,16 @@ export type StreamEvent =
   | { type: 'plan_proposed'; planId: string; task: string; steps: PlanStep[] }
   | { type: 'plan_progress'; planId: string; steps: PlanStep[] }
   | { type: 'plan_cleared'; planId: string }
-  | { type: 'turn_usage'; provider: string; model: string; inputTokens: number; outputTokens: number; costUsd: number; estimated: boolean; sessionTotalUsd: number }
+  | {
+      type: 'turn_usage';
+      provider: string;
+      model: string;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+      estimated: boolean;
+      sessionTotalUsd: number;
+    }
   | { type: 'provider_switched'; provider: string; model: string }
   | { type: 'budget_warning'; capUsd: number; totalUsd: number }
   | { type: 'budget_exceeded'; capUsd: number; totalUsd: number };
@@ -182,9 +189,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-const get = <T,>(path: string) => request<T>(path);
-const post = <T,>(path: string, body: unknown = {}) =>
-  request<T>(path, { method: 'POST', body: JSON.stringify(body) });
+const get = <T>(path: string) => request<T>(path);
+const post = <T>(path: string, body: unknown = {}) => request<T>(path, { method: 'POST', body: JSON.stringify(body) });
 
 export interface SettingsBody {
   provider?: string;
@@ -218,16 +224,14 @@ export const api = {
   testSettings: (provider: string, baseUrl?: string) =>
     post<{ ok: boolean; message: string }>('/api/settings/test', { provider, ...(baseUrl ? { baseUrl } : {}) }),
 
-  selectProject: (path: string) =>
-    post<{ path: string }>('/api/projects/select', { path }),
+  selectProject: (path: string) => post<{ path: string }>('/api/projects/select', { path }),
 
   starters: () => get<Starter[]>('/api/starters'),
 
   starterProject: (starterId?: string) =>
     post<{ path: string }>('/api/projects/starter', starterId ? { starterId } : {}),
 
-  startTurn: (prompt: string) =>
-    post<{ ok: boolean; turnId: string }>('/api/turn', { prompt }),
+  startTurn: (prompt: string) => post<{ ok: boolean; turnId: string }>('/api/turn', { prompt }),
 
   undo: () => post<{ ok: boolean; files: ChangedFile[] }>('/api/undo'),
 

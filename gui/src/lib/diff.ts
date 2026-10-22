@@ -14,12 +14,6 @@ export function parseDiffLines(diff: string): DiffLine[] {
     .slice(2)
     .map((line) => ({
       text: line,
-      kind: line.startsWith('+')
-        ? 'add'
-        : line.startsWith('-')
-          ? 'del'
-          : line.startsWith('@@')
-            ? 'hunk'
-            : 'context',
+      kind: line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : line.startsWith('@@') ? 'hunk' : 'context',
     }));
 }

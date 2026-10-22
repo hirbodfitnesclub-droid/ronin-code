@@ -31,8 +31,14 @@ export default function PreviewPanel(p: Props) {
   return (
     <section className="preview-panel" aria-label="Live preview">
       <div className="preview-bar">
-        <span className="preview-dots" aria-hidden="true"><i /><i /><i /></span>
-        <span className="preview-url" dir="ltr">/preview/</span>
+        <span className="preview-dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+        <span className="preview-url" dir="ltr">
+          /preview/
+        </span>
         <span className="preview-bar-actions">
           <button
             type="button"
@@ -65,7 +71,9 @@ export default function PreviewPanel(p: Props) {
           />
         ) : (
           <div className="preview-empty">
-            <div className="preview-empty-orb" aria-hidden="true"><span /></div>
+            <div className="preview-empty-orb" aria-hidden="true">
+              <span />
+            </div>
             <Logo />
             <p className="preview-empty-title">{t('app.previewWillAppear')}</p>
             <p className="preview-empty-sub">{t('app.previewEmptySub')}</p>

@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  api,
-  type Provider,
-  type Starter,
-  type Status,
-} from '../lib/api';
+import { api, type Provider, type Starter, type Status } from '../lib/api';
 import { makeLangCtx, type Lang } from '../lib/i18n';
 import { apiErrorKey } from '../lib/errors';
 
@@ -125,9 +120,22 @@ export function useSession(opts: SessionOptions) {
   };
 
   return {
-    status, providers, sessionCost, setSessionCost,
-    lang, ctx, t, fmtUsd, translateError,
-    setLangOverride, refreshMeta, setProjectPath,
-    openProject, createStarter, loadStarters, toggleAuto, togglePlan,
+    status,
+    providers,
+    sessionCost,
+    setSessionCost,
+    lang,
+    ctx,
+    t,
+    fmtUsd,
+    translateError,
+    setLangOverride,
+    refreshMeta,
+    setProjectPath,
+    openProject,
+    createStarter,
+    loadStarters,
+    toggleAuto,
+    togglePlan,
   };
 }

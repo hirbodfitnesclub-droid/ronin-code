@@ -47,11 +47,7 @@ export default function RichText({ text }: { text: string }) {
     flushList(`ul-${idx}`);
     if (!line.trim()) return;
     const heading = line.match(/^#{1,4}\s+(.*)$/);
-    blocks.push(
-      <p key={`p-${idx}`}>
-        {renderInline(heading ? heading[1] : line, `p-${idx}`)}
-      </p>,
-    );
+    blocks.push(<p key={`p-${idx}`}>{renderInline(heading ? heading[1] : line, `p-${idx}`)}</p>);
   });
   flushList('ul-end');
   return <>{blocks}</>;

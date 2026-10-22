@@ -50,10 +50,18 @@ export default function PublishPanel({ open, projectName, onClose }: Props) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose} role="presentation">
-      <div className="modal modal--wide" role="dialog" aria-modal="true" aria-label={t('publish.title')} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal--wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('publish.title')}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <h2>{t('publish.title')}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('settings.close')}>×</button>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('settings.close')}>
+            ×
+          </button>
         </div>
         <div className="modal-actions" style={{ justifyContent: 'flex-start', marginBottom: 16 }}>
           <button type="button" className="btn btn--primary" onClick={() => void downloadZip()} disabled={busy !== ''}>

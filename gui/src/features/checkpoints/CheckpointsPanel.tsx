@@ -17,7 +17,11 @@ export default function CheckpointsPanel({ open, onClose, onRestored }: Props) {
   const [notice, setNotice] = useState('');
 
   const load = useCallback(async () => {
-    try { setList(await api.checkpoints()); } catch { /* panel shows empty state */ }
+    try {
+      setList(await api.checkpoints());
+    } catch {
+      /* panel shows empty state */
+    }
   }, []);
 
   useEffect(() => {
@@ -53,10 +57,18 @@ export default function CheckpointsPanel({ open, onClose, onRestored }: Props) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose} role="presentation">
-      <div className="modal modal--wide" role="dialog" aria-modal="true" aria-label={t('checkpoints.title')} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal--wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('checkpoints.title')}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <h2>{t('checkpoints.title')}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('settings.close')}>×</button>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('settings.close')}>
+            ×
+          </button>
         </div>
         <div className="checkpoint-save-row">
           <input
@@ -82,7 +94,12 @@ export default function CheckpointsPanel({ open, onClose, onRestored }: Props) {
                     {new Date(cp.ts).toLocaleString()} · {fmtNum(cp.files)}
                   </span>
                 </span>
-                <button type="button" className="btn btn--ghost btn--sm" onClick={() => void restore(cp)} disabled={busy}>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => void restore(cp)}
+                  disabled={busy}
+                >
                   {t('checkpoints.restore')}
                 </button>
               </div>

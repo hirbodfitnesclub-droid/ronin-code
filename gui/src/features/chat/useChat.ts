@@ -1,11 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  api,
-  openStream,
-  type ActivityKind,
-  type ChangedFile,
-  type StreamEvent,
-} from '../../lib/api';
+import { api, openStream, type ActivityKind, type ChangedFile, type StreamEvent } from '../../lib/api';
 import type { StringKey } from '../../lib/i18n';
 import type { TimelineItem } from './types';
 
@@ -47,7 +41,10 @@ export function useChat(opts: ChatOptions) {
         { kind: 'message', id: id(), role: 'user', text: 'Add a dark hero section with a signup form' },
         { kind: 'message', id: id(), role: 'assistant', text: 'Done — the hero is live in the preview.' },
         {
-          kind: 'changes', id: id(), undoing: false, undone: false,
+          kind: 'changes',
+          id: id(),
+          undoing: false,
+          undone: false,
           files: [
             { path: 'index.html', action: 'modified' },
             { path: 'styles.css', action: 'modified' },
@@ -93,7 +90,11 @@ export function useChat(opts: ChatOptions) {
           next = [
             ...next,
             {
-              kind: 'changes', id: id(), files, undoing: false, undone: false,
+              kind: 'changes',
+              id: id(),
+              files,
+              undoing: false,
+              undone: false,
               ...(usage ? { costUsd: usage.costUsd, costEstimated: usage.estimated } : {}),
             },
           ];
@@ -115,9 +116,7 @@ export function useChat(opts: ChatOptions) {
       switch (ev.type) {
         case 'activity_start':
           setActivities((prev) =>
-            prev.some((a) => a.id === ev.activityId)
-              ? prev
-              : [...prev, { id: ev.activityId, kind: ev.kind }],
+            prev.some((a) => a.id === ev.activityId) ? prev : [...prev, { id: ev.activityId, kind: ev.kind }],
           );
           break;
         case 'activity_end':
@@ -162,17 +161,19 @@ export function useChat(opts: ChatOptions) {
           setItems((prev) => [
             ...prev,
             {
-              kind: 'approval', id: id(), approvalId: ev.approvalId,
-              approvalKind: ev.kind, detail: ev.detail, resolved: null,
+              kind: 'approval',
+              id: id(),
+              approvalId: ev.approvalId,
+              approvalKind: ev.kind,
+              detail: ev.detail,
+              resolved: null,
             },
           ]);
           break;
         case 'approval_resolved':
           setItems((prev) =>
             prev.map((it) =>
-              it.kind === 'approval' && it.approvalId === ev.approvalId
-                ? { ...it, resolved: ev.approved }
-                : it,
+              it.kind === 'approval' && it.approvalId === ev.approvalId ? { ...it, resolved: ev.approved } : it,
             ),
           );
           break;
@@ -186,9 +187,7 @@ export function useChat(opts: ChatOptions) {
           break;
         case 'plan_progress':
           setItems((prev) =>
-            prev.map((it) =>
-              it.kind === 'plan' && it.planId === ev.planId ? { ...it, steps: ev.steps } : it,
-            ),
+            prev.map((it) => (it.kind === 'plan' && it.planId === ev.planId ? { ...it, steps: ev.steps } : it)),
           );
           break;
         case 'plan_cleared':
@@ -224,13 +223,11 @@ export function useChat(opts: ChatOptions) {
     return () => source.close();
   }, [finishTurn, opts]);
 
-
   /* ---------------- auto-scroll chat ---------------- */
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [items, activities, running]);
-
 
   const send = useCallback(
     async (raw?: string) => {
@@ -253,15 +250,11 @@ export function useChat(opts: ChatOptions) {
   );
 
   const undoChanges = async (itemId: number) => {
-    setItems((prev) =>
-      prev.map((it) => (it.kind === 'changes' && it.id === itemId ? { ...it, undoing: true } : it)),
-    );
+    setItems((prev) => prev.map((it) => (it.kind === 'changes' && it.id === itemId ? { ...it, undoing: true } : it)));
     try {
       await api.undo();
       setItems((prev) =>
-        prev.map((it) =>
-          it.kind === 'changes' && it.id === itemId ? { ...it, undoing: false, undone: true } : it,
-        ),
+        prev.map((it) => (it.kind === 'changes' && it.id === itemId ? { ...it, undoing: false, undone: true } : it)),
       );
       opts.invalidatePreview();
     } catch (err) {
@@ -274,9 +267,7 @@ export function useChat(opts: ChatOptions) {
 
   const decideApproval = async (approvalId: string, approved: boolean) => {
     setItems((prev) =>
-      prev.map((it) =>
-        it.kind === 'approval' && it.approvalId === approvalId ? { ...it, resolved: approved } : it,
-      ),
+      prev.map((it) => (it.kind === 'approval' && it.approvalId === approvalId ? { ...it, resolved: approved } : it)),
     );
     try {
       await api.approval(approvalId, approved);
@@ -337,9 +328,19 @@ export function useChat(opts: ChatOptions) {
   };
 
   return {
-    items, input, running, activities,
-    scrollRef, textareaRef,
-    send, undoChanges, decideApproval, approvePlan, rejectPlan,
-    beginTurnUi, onInputKeyDown, onInputChange,
+    items,
+    input,
+    running,
+    activities,
+    scrollRef,
+    textareaRef,
+    send,
+    undoChanges,
+    decideApproval,
+    approvePlan,
+    rejectPlan,
+    beginTurnUi,
+    onInputKeyDown,
+    onInputChange,
   };
 }

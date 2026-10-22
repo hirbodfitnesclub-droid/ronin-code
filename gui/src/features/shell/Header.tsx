@@ -32,14 +32,18 @@ export default function Header(p: Props) {
         <span className="wordmark">
           Ronin <span className="wordmark-accent">Code</span>
         </span>
-        <span className="wordmark-fa" lang="fa" dir="rtl">رونین کد</span>
+        <span className="wordmark-fa" lang="fa" dir="rtl">
+          رونین کد
+        </span>
       </div>
 
       <div className="header-project">
         {p.project ? (
           <span className="project-label">
             <span className="project-name">{p.projectName}</span>
-            <span className="project-path" title={p.project} dir="ltr">{p.project}</span>
+            <span className="project-path" title={p.project} dir="ltr">
+              {p.project}
+            </span>
           </span>
         ) : (
           <span className="project-path project-path--empty">{t('app.noProjectYet')}</span>
@@ -95,7 +99,11 @@ export default function Header(p: Props) {
           <span className="mode-dot" />
           {p.mode === 'live' ? t('app.live') : t('app.previewMode')}
         </span>
-        {p.model && <span className="model-label" dir="ltr">{p.model}</span>}
+        {p.model && (
+          <span className="model-label" dir="ltr">
+            {p.model}
+          </span>
+        )}
         <button type="button" className="btn btn--ghost btn--sm" onClick={p.onOpenSettings}>
           {t('app.settings')}
         </button>

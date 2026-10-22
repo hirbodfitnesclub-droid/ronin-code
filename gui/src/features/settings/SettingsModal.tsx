@@ -42,9 +42,7 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
     if (initial) {
       setProvider(initial.id);
       setBaseUrl(initial.baseUrl ?? '');
-      setModel(
-        status?.provider === initial.id && status?.model ? status.model : initial.defaultModel,
-      );
+      setModel(status?.provider === initial.id && status?.model ? status.model : initial.defaultModel);
       setExtraKeys(['']);
     }
     setApiKey('');
@@ -55,7 +53,10 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
     setEnvAccess(status?.envAccess ?? false);
     setProjectMode(status?.projectMode ?? '');
     setBudget(status?.budgetCapUsd ? String(status.budgetCapUsd) : '');
-    void api.usage().then((u) => setRtkSaved(u.rtk.savedChars)).catch(() => setRtkSaved(0));
+    void api
+      .usage()
+      .then((u) => setRtkSaved(u.rtk.savedChars))
+      .catch(() => setRtkSaved(0));
   }, [open, providers, status]);
 
   if (!open) return null;

@@ -15,10 +15,18 @@ export default function StartersModal(p: Props) {
   if (!p.open) return null;
   return (
     <div className="modal-backdrop" onMouseDown={p.onClose} role="presentation">
-      <div className="modal modal--wide" role="dialog" aria-modal="true" aria-label={t('starters.title')} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal--wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('starters.title')}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <h2>{t('starters.title')}</h2>
-          <button type="button" className="icon-btn" onClick={p.onClose} aria-label={t('settings.close')}>×</button>
+          <button type="button" className="icon-btn" onClick={p.onClose} aria-label={t('settings.close')}>
+            ×
+          </button>
         </div>
         <div className="starters-grid">
           {(p.starters ?? []).map((s) => (

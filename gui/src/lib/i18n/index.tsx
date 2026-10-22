@@ -50,13 +50,7 @@ export function makeLangCtx(lang: Lang): LangCtx {
   };
 }
 
-export function LanguageProvider({
-  lang,
-  children,
-}: {
-  lang: Lang;
-  children: React.ReactNode;
-}) {
+export function LanguageProvider({ lang, children }: { lang: Lang; children: React.ReactNode }) {
   const value = useMemo(() => makeLangCtx(lang), [lang]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -15,12 +15,7 @@ export default function Logo() {
           opacity="0.92"
         />
         {/* Katana slash through the centre */}
-        <path
-          d="M9.5 22.5 L22.8 9.2"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-        />
+        <path d="M9.5 22.5 L22.8 9.2" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
         <path d="M21.2 7.6 L24.4 10.8" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
       </svg>
     </span>

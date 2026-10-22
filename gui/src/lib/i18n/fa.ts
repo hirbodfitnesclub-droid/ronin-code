@@ -129,7 +129,8 @@ export const fa: Record<StringKey, string> = {
   'settings.language': 'زبان',
   'settings.languageHint': 'زبان رابط کاربری. بلافاصله اعمال می‌شه.',
   'settings.router': 'مسیریاب و جایگزینی خودکار',
-  'settings.routerHint': 'برای هر ارائه‌دهنده چند کلید اضافه کن — رونین بین‌شون می‌چرخه و وقتی یکی به سقف خورد، خودکار عوضش می‌کنه.',
+  'settings.routerHint':
+    'برای هر ارائه‌دهنده چند کلید اضافه کن — رونین بین‌شون می‌چرخه و وقتی یکی به سقف خورد، خودکار عوضش می‌کنه.',
   'settings.addKey': 'افزودن کلید',
   'settings.removeKey': 'حذف',
   'settings.keyN': 'کلید {n}',
@@ -150,7 +151,8 @@ export const fa: Record<StringKey, string> = {
   'settings.rtkSaved': 'فشرده‌سازی خروجی تا حالا حدود {chars} نویسه از کانتکست رو ذخیره کرده.',
 
   'onboarding.welcomeTitle': 'به رونین کد خوش اومدی',
-  'onboarding.welcomeSub': 'یه استودیوی آروم برای ساختن نرم‌افزار با توصیف کردن. کدت و کلیدهات روی دستگاه خودت می‌مونن.',
+  'onboarding.welcomeSub':
+    'یه استودیوی آروم برای ساختن نرم‌افزار با توصیف کردن. کدت و کلیدهات روی دستگاه خودت می‌مونن.',
   'onboarding.chooseLang': 'زبانت رو انتخاب کن',
   'onboarding.continue': 'ادامه',
   'onboarding.back': 'برگرد',

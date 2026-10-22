@@ -39,9 +39,18 @@ export default function App() {
   );
   const session = useSession(sessionOpts);
   const {
-    status, providers, sessionCost, lang, t,
-    translateError, refreshMeta, setLangOverride,
-    openProject, createStarter, toggleAuto, togglePlan,
+    status,
+    providers,
+    sessionCost,
+    lang,
+    t,
+    translateError,
+    refreshMeta,
+    setLangOverride,
+    openProject,
+    createStarter,
+    toggleAuto,
+    togglePlan,
   } = session;
 
   const chatOpts = useMemo(
@@ -107,12 +116,7 @@ export default function App() {
         )}
 
         <main className={`main ${previewOpen ? '' : 'main--chat-only'}`}>
-          <ChatPanel
-            chat={chat}
-            mode={mode}
-            onOpenStarters={openStarters}
-            onOpenProject={() => void openProject()}
-          />
+          <ChatPanel chat={chat} mode={mode} onOpenStarters={openStarters} onOpenProject={() => void openProject()} />
           <PreviewPanel
             open={previewOpen}
             project={project}
@@ -137,11 +141,7 @@ export default function App() {
           onBuilt={(path, ideaText) => onIdeaBuilt(path, ideaText)}
         />
 
-        <PublishPanel
-          open={publishOpen}
-          projectName={projectName}
-          onClose={() => setPublishOpen(false)}
-        />
+        <PublishPanel open={publishOpen} projectName={projectName} onClose={() => setPublishOpen(false)} />
 
         <CheckpointsPanel
           open={checkpointsOpen}

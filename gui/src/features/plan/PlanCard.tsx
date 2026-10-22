@@ -21,7 +21,10 @@ export default function PlanCard({ task, steps, status, onApprove, onReject }: P
       <p className="plan-task">{task}</p>
       <ol className="plan-steps">
         {steps.map((s, i) => (
-          <li key={i} className={`plan-step-item plan-step-item--${s.state ?? (status === 'done' ? 'done' : 'pending')}`}>
+          <li
+            key={i}
+            className={`plan-step-item plan-step-item--${s.state ?? (status === 'done' ? 'done' : 'pending')}`}
+          >
             <span className="plan-step-node">
               <span className="plan-step-num">{i + 1}</span>
             </span>

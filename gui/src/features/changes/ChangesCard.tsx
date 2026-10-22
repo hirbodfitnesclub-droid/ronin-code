@@ -91,9 +91,7 @@ export default function ChangesCard({ files, mode, onUndo, undoing, undone, cost
       <div className="changes-visual" aria-hidden="true">
         {files.slice(0, 6).map((f, i) => (
           <span key={`${f.path}-${i}`} className="change-tile">
-            <span
-              className={`change-dot ${f.action === 'created' ? 'change-dot--created' : 'change-dot--modified'}`}
-            />
+            <span className={`change-dot ${f.action === 'created' ? 'change-dot--created' : 'change-dot--modified'}`} />
             <span className="change-tile-lines">
               <i style={{ width: `${58 + ((i * 13) % 30)}%` }} />
               <i className="dim" style={{ width: `${34 + ((i * 7) % 22)}%` }} />
@@ -112,7 +110,8 @@ export default function ChangesCard({ files, mode, onUndo, undoing, undone, cost
         </span>
         {typeof costUsd === 'number' && (
           <span className="changes-cost">
-            {t('cost.thisTurn')} {fmtUsd(costUsd)}{costEstimated ? ` ${t('cost.est')}` : ''}
+            {t('cost.thisTurn')} {fmtUsd(costUsd)}
+            {costEstimated ? ` ${t('cost.est')}` : ''}
           </span>
         )}
       </div>
@@ -123,12 +122,7 @@ export default function ChangesCard({ files, mode, onUndo, undoing, undone, cost
         <button type="button" className="btn btn--ghost" onClick={onUndo} disabled={undoing || undone}>
           {undone ? t('changes.undone') : undoing ? t('changes.undoing') : t('changes.undo')}
         </button>
-        <button
-          type="button"
-          className="btn btn--ghost"
-          onClick={() => void toggleDiff()}
-          aria-expanded={diffOpen}
-        >
+        <button type="button" className="btn btn--ghost" onClick={() => void toggleDiff()} aria-expanded={diffOpen}>
           {t('changes.diff')}
           <span className={`chevron ${diffOpen ? 'chevron--open' : ''}`}>⌄</span>
         </button>
@@ -141,7 +135,12 @@ export default function ChangesCard({ files, mode, onUndo, undoing, undone, cost
           {t('changes.details')}
           <span className={`chevron ${detailsOpen ? 'chevron--open' : ''}`}>⌄</span>
         </button>
-        <button type="button" className="btn btn--ghost" onClick={() => void saveCheckpoint()} disabled={checkpointSaved}>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={() => void saveCheckpoint()}
+          disabled={checkpointSaved}
+        >
           {checkpointSaved ? '✓' : t('changes.checkpoint')}
         </button>
       </div>

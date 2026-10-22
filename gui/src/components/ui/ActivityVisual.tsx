@@ -30,10 +30,7 @@ function WritingMotif() {
     <div className="motif motif--writing">
       {[88, 64, 76, 46, 70].map((w, i) => (
         <span key={i} className="write-row">
-          <span
-            className="write-fill"
-            style={{ width: `${w}%`, animationDelay: `${i * 0.32}s` }}
-          />
+          <span className="write-fill" style={{ width: `${w}%`, animationDelay: `${i * 0.32}s` }} />
         </span>
       ))}
     </div>
@@ -126,9 +123,15 @@ function ThinkingMotif() {
   return (
     <div className="motif motif--thinking">
       <span className="think-core" />
-      <span className="orbit orbit--a"><i /></span>
-      <span className="orbit orbit--b"><i /></span>
-      <span className="orbit orbit--c"><i /></span>
+      <span className="orbit orbit--a">
+        <i />
+      </span>
+      <span className="orbit orbit--b">
+        <i />
+      </span>
+      <span className="orbit orbit--c">
+        <i />
+      </span>
     </div>
   );
 }

@@ -149,7 +149,8 @@ export const en = {
   'settings.rtkSaved': 'Output compression saved ~{chars} characters of context so far.',
 
   'onboarding.welcomeTitle': 'Welcome to Ronin Code',
-  'onboarding.welcomeSub': 'A calm studio for building software by describing it. Your code and keys stay on your machine.',
+  'onboarding.welcomeSub':
+    'A calm studio for building software by describing it. Your code and keys stay on your machine.',
   'onboarding.chooseLang': 'Choose your language',
   'onboarding.continue': 'Continue',
   'onboarding.back': 'Back',

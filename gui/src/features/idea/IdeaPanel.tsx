@@ -55,10 +55,18 @@ export default function IdeaPanel({ open, mode, onClose, onBuilt }: Props) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose} role="presentation">
-      <div className="modal modal--wide" role="dialog" aria-modal="true" aria-label={t('idea.title')} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="modal modal--wide"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('idea.title')}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <h2>{t('idea.title')}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('settings.close')}>×</button>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={t('settings.close')}>
+            ×
+          </button>
         </div>
         <p className="panel-sub">{t('idea.subtitle')}</p>
 
@@ -74,7 +82,12 @@ export default function IdeaPanel({ open, mode, onClose, onBuilt }: Props) {
             {error && <p className="test-result test-result--bad">{error}</p>}
             <div className="modal-actions">
               <span />
-              <button type="button" className="btn btn--primary" onClick={() => void mature()} disabled={busy || !idea.trim()}>
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => void mature()}
+                disabled={busy || !idea.trim()}
+              >
                 {busy ? t('idea.thinking') : t('idea.mature')}
               </button>
             </div>
@@ -85,19 +98,31 @@ export default function IdeaPanel({ open, mode, onClose, onBuilt }: Props) {
               <div className="idea-card">
                 <h3>{t('idea.audience')}</h3>
                 <p>{matured.audience.who}</p>
-                <p className="pain">{t('idea.pain')}: {matured.audience.pain}</p>
+                <p className="pain">
+                  {t('idea.pain')}: {matured.audience.pain}
+                </p>
               </div>
               <div className="idea-card">
                 <h3>{t('idea.features')}</h3>
                 <ul>
-                  {matured.features.map((f, i) => (<li key={i}>{f}</li>))}
+                  {matured.features.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
                 </ul>
               </div>
               <div className="idea-card">
                 <h3>{t('idea.plan')}</h3>
                 <ol>
                   {matured.plan.map((s, i) => (
-                    <li key={i}>{s.title}{s.detail ? <> — <span>{s.detail}</span></> : null}</li>
+                    <li key={i}>
+                      {s.title}
+                      {s.detail ? (
+                        <>
+                          {' '}
+                          — <span>{s.detail}</span>
+                        </>
+                      ) : null}
+                    </li>
                   ))}
                 </ol>
               </div>

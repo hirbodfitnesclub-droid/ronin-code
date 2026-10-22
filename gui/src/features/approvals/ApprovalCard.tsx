@@ -12,16 +12,23 @@ interface Props {
 export default function ApprovalCard({ kind, detail, resolved, onDecide }: Props) {
   const { t } = useLang();
   return (
-    <section className="approval-card" aria-label={kind === 'command' ? t('approval.titleCommand') : t('approval.titleWrite')}>
+    <section
+      className="approval-card"
+      aria-label={kind === 'command' ? t('approval.titleCommand') : t('approval.titleWrite')}
+    >
       <div className="approval-title">
         <span className="approval-pulse" aria-hidden="true" />
         {kind === 'command' ? t('approval.titleCommand') : t('approval.titleWrite')}
       </div>
       {kind === 'command' && detail.command && (
-        <p className="approval-command" dir="ltr">{detail.command}</p>
+        <p className="approval-command" dir="ltr">
+          {detail.command}
+        </p>
       )}
       {kind === 'write_outside' && detail.path && (
-        <p className="approval-path" dir="ltr">{detail.path}</p>
+        <p className="approval-path" dir="ltr">
+          {detail.path}
+        </p>
       )}
       {resolved === null ? (
         <>
