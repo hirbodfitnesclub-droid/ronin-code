@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------ */
-/*  Ronin Code — API layer (contract v1)                               */
+/*  Ronin Code — API layer (contract v1). Typed request/response
+   contracts for the whole host API live in this one module (lib/api).                               */
 /*                                                                     */
 /*  Token resolution (first hit wins):                                 */
 /*    1. window.__RONIN_TOKEN__  — injected by the host via            */

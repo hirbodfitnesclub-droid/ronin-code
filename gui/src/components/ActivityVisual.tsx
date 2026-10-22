@@ -1,4 +1,4 @@
-import type { ActivityKind } from '../api';
+import type { ActivityKind } from '../lib/api';
 
 /**
  * ActivityVisual — the heart of Ronin Code.

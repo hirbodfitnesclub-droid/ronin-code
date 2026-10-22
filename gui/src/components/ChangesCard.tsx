@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { api, type ChangedFile, type DiffFile, type Mode } from '../api';
-import { useLang } from '../i18n';
+import { api, type ChangedFile, type DiffFile, type Mode } from '../lib/api';
+import { useLang } from '../lib/i18n';
+import { parseDiffLines } from '../lib/diff';
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -28,22 +29,23 @@ function DiffBlock({ file }: { file: DiffFile }) {
     );
   }
   if (!file.diff) return null;
-  const lines = file.diff.split('\n').slice(2); // skip ---/+++ headers
+  const lines = parseDiffLines(file.diff);
   return (
     <div className="diff-file">
       <div className="diff-file-head">{file.path}</div>
       <pre className="diff-body">
         {lines.map((line, i) => {
-          const cls = line.startsWith('+')
-            ? 'diff-line--add'
-            : line.startsWith('-')
-              ? 'diff-line--del'
-              : line.startsWith('@@')
-                ? 'diff-line--hunk'
-                : '';
+          const cls =
+            line.kind === 'add'
+              ? 'diff-line--add'
+              : line.kind === 'del'
+                ? 'diff-line--del'
+                : line.kind === 'hunk'
+                  ? 'diff-line--hunk'
+                  : '';
           return (
             <div key={i} className={`diff-line ${cls}`}>
-              {line || ' '}
+              {line.text || ' '}
             </div>
           );
         })}

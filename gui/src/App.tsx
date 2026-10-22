@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
   openStream,
-  ApiError,
   type ActivityKind,
   type ApprovalDetail,
   type ChangedFile,
@@ -11,8 +10,9 @@ import {
   type Starter,
   type Status,
   type StreamEvent,
-} from './api';
-import { ERROR_CODE_KEYS, LanguageProvider, makeLangCtx, type Lang } from './i18n';
+} from './lib/api';
+import { LanguageProvider, makeLangCtx, type Lang } from './lib/i18n';
+import { apiErrorKey } from './lib/errors';
 import ActivityVisual from './components/ActivityVisual';
 import ApprovalCard from './components/ApprovalCard';
 import ChangesCard from './components/ChangesCard';
@@ -72,9 +72,8 @@ export default function App() {
 
   const translateError = useCallback(
     (err: unknown, fallbackKey: Parameters<typeof t>[0] = 'errors.unknown'): string => {
-      if (err instanceof ApiError && err.code && ERROR_CODE_KEYS[err.code]) {
-        return t(ERROR_CODE_KEYS[err.code]);
-      }
+      const key = apiErrorKey(err);
+      if (key) return t(key);
       if (err instanceof Error && err.message) return err.message;
       return t(fallbackKey);
     },
