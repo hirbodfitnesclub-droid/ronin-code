@@ -2,7 +2,6 @@
 // Plain ESM Node (>=20), node:http + stdlib only. The embedded agent engine
 // is loaded lazily, only for live turns (see ENGINE.md for the exact SDK API).
 
-
 import http from "node:http";
 
 import fs from "node:fs";
@@ -18,95 +17,28 @@ import crypto from "node:crypto";
 import zlib from "node:zlib";
 
 import { fileURLToPath } from "node:url";
+
 import { GUI_DIST, VERSION, RONIN_HOME, ENGINE_DIR, SESSIONS_DIR, SNAPSHOTS_DIR } from "./paths.js";
+
 import { sleep, readJsonFile, cleanError } from "./util.js";
+
 import { broadcast, sseClients, bumpEventSeq } from "./sse.js";
+
 import {
   PROVIDERS, providerById, config, getProject, setProject, saveConfig,
   projectMode, effectiveAutoMode, effectivePlanMode,
   loadAuth, saveAuth, keyList, currentModel, providersView,
 } from "./config.js";
+
 import { loadUsage, saveUsage, keyIdOf, recordKeyUse, recordTurnUsage, sessionTotals } from "./usage.js";
+import { projectHash, walkProject, takeSnapshot, readManifest, diffAgainstManifest, listCheckpoints, createCheckpoint, restoreTree, checkpointsBase } from "./snapshots.js";
+import { unifiedDiff } from "./diff.js";
+import { projectZipBuffer } from "./publish.js";
+import { STARTER_HTML, STARTER_CSS, STARTER_JS } from "./starters.js";
 
 const PORT = Number(process.env.PORT || 7331);
 
 const TOKEN = crypto.randomBytes(24).toString("hex");
-
-const SKIP_DIRS = new Set(["node_modules", ".git"]);
-
-const MAX_FILE = 5 * 1024 * 1024;
-
-const MAX_FILES = 2000;
-
-function projectHash(project) {
-  return crypto.createHash("sha256").update(path.resolve(project)).digest("hex").slice(0, 16);
-}
-
-async function walkProject(project) {
-  const files = [];
-  async function walk(dir) {
-    if (files.length >= MAX_FILES) return;
-    let entries;
-    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const e of entries) {
-      if (files.length >= MAX_FILES) return;
-      if (e.isDirectory()) {
-        if (!SKIP_DIRS.has(e.name)) await walk(path.join(dir, e.name));
-      } else if (e.isFile()) {
-        const full = path.join(dir, e.name);
-        try {
-          const st = await fsp.stat(full);
-          if (st.size > MAX_FILE) continue;
-          const hash = crypto.createHash("sha256").update(await fsp.readFile(full)).digest("hex");
-          files.push({ path: path.relative(project, full), size: st.size, hash });
-        } catch {}
-      }
-    }
-  }
-  await walk(project);
-  return files;
-}
-
-async function takeSnapshot(project) {
-  const hash = projectHash(project);
-  const base = path.join(SNAPSHOTS_DIR, hash);
-  const latest = path.join(base, "latest");
-  await fsp.rm(latest, { recursive: true, force: true });
-  await fsp.mkdir(latest, { recursive: true });
-  const files = await walkProject(project);
-  for (const f of files) {
-    const dest = path.join(latest, f.path);
-    await fsp.mkdir(path.dirname(dest), { recursive: true });
-    await fsp.copyFile(path.join(project, f.path), dest);
-  }
-  const manifest = { project: path.resolve(project), timestamp: new Date().toISOString(), files };
-  await fsp.mkdir(base, { recursive: true });
-  await fsp.writeFile(path.join(base, "manifest.json"), JSON.stringify(manifest, null, 2));
-  return manifest;
-}
-
-async function readManifest(project) {
-  try {
-    return JSON.parse(await fsp.readFile(path.join(SNAPSHOTS_DIR, projectHash(project), "manifest.json"), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function diffAgainstManifest(project, manifest) {
-  if (!manifest) return [];
-  const before = new Map(manifest.files.map((f) => [f.path, f.hash]));
-  const after = await walkProject(project);
-  const changes = [];
-  for (const f of after) {
-    if (!before.has(f.path)) changes.push({ path: f.path, action: "created" });
-    else if (before.get(f.path) !== f.hash) changes.push({ path: f.path, action: "modified" });
-  }
-  return changes;
-}
-
-// ---------- SSE ----------
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -217,49 +149,6 @@ async function testProviderKey(providerId, apiKey, baseUrl) {
 }
 
 // ---------- starter project ----------
-
-const STARTER_HTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Ronin Code — Starter</title>
-<link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-<main class="card">
-  <div class="mark">⚔</div>
-  <h1>Ronin Code Starter</h1>
-  <p>Your project is live. Ask Ronin Code to change this page — restyle it, add a section, make it yours.</p>
-  <button id="hello">Say hello</button>
-  <p id="out" class="out"></p>
-</main>
-<script src="app.js"></script>
-</body>
-</html>
-`;
-
-const STARTER_CSS = `:root { color-scheme: dark; }
-* { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0e14; color: #e6e9ef;
-  font-family: ui-sans-system, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.card { max-width: 520px; padding: 48px 40px; text-align: center; background: #121722; border: 1px solid #232b3d;
-  border-radius: 20px; box-shadow: 0 24px 60px rgba(0,0,0,.45); }
-.mark { font-size: 40px; }
-h1 { margin: 14px 0 10px; font-size: 28px; letter-spacing: -.02em; }
-p { color: #9aa4b8; line-height: 1.6; }
-button { margin-top: 14px; padding: 11px 22px; border: 0; border-radius: 999px; background: #e8b33c; color: #171106;
-  font-weight: 600; cursor: pointer; }
-button:hover { filter: brightness(1.08); }
-.out { min-height: 1.5em; color: #e8b33c; }
-`;
-
-const STARTER_JS = `document.getElementById("hello").addEventListener("click", () => {
-  document.getElementById("out").textContent = "Hello from your Ronin Code starter project.";
-});
-`;
-
-// ---------- usage store (cost center + router stats) ----------
 
 function pickKey(providerId, auth, exclude = new Set()) {
   const keys = keyList(auth[providerId]);
@@ -1060,173 +949,6 @@ async function runTurn(prompt, opts = {}) {
 }
 
 // ---------- named checkpoints ----------
-
-function checkpointsBase(project) {
-  return path.join(SNAPSHOTS_DIR, projectHash(project), "checkpoints");
-}
-
-function checkpointsMetaPath(project) {
-  return path.join(SNAPSHOTS_DIR, projectHash(project), "checkpoints.json");
-}
-
-function listCheckpoints(project) {
-  const list = readJsonFile(checkpointsMetaPath(project), []);
-  return Array.isArray(list) ? list : [];
-}
-
-async function createCheckpoint(project, name) {
-  const manifest = await takeSnapshot(project); // refreshes "latest"
-  const id = crypto.randomUUID().slice(0, 8);
-  const dir = path.join(checkpointsBase(project), id);
-  const latest = path.join(SNAPSHOTS_DIR, projectHash(project), "latest");
-  await fsp.mkdir(checkpointsBase(project), { recursive: true });
-  await fsp.cp(latest, dir, { recursive: true });
-  const meta = { id, name: name || new Date().toLocaleString(), ts: new Date().toISOString(), files: manifest.files.length };
-  const list = listCheckpoints(project);
-  list.unshift(meta);
-  await fsp.writeFile(checkpointsMetaPath(project), JSON.stringify(list.slice(0, 50), null, 2));
-  return meta;
-}
-
-async function restoreTree(project, sourceDir, manifest) {
-  const keep = new Set(manifest.files.map((f) => f.path));
-  const now = await walkProject(project);
-  for (const f of now) {
-    if (!keep.has(f.path)) await fsp.rm(path.join(project, f.path), { force: true });
-  }
-  for (const f of manifest.files) {
-    const dest = path.join(project, f.path);
-    await fsp.mkdir(path.dirname(dest), { recursive: true });
-    await fsp.copyFile(path.join(sourceDir, f.path), dest);
-  }
-}
-
-// ---------- unified diff ----------
-
-function unifiedDiff(oldText, newText, relPath) {
-  const a = oldText.split("\n");
-  const b = newText.split("\n");
-  if (a.length > 1500 || b.length > 1500) return null;
-  // LCS table
-  const dp = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
-  const ops = []; // {type:' '|'-'|'+', line}
-  let i = 0, j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) { ops.push({ t: " ", line: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ t: "-", line: a[i] }); i++; }
-    else { ops.push({ t: "+", line: b[j] }); j++; }
-  }
-  while (i < a.length) ops.push({ t: "-", line: a[i++] });
-  while (j < b.length) ops.push({ t: "+", line: b[j++] });
-  // Build hunks with 3 lines of context.
-  const CTX = 3;
-  const hunks = [];
-  let idx = 0;
-  while (idx < ops.length) {
-    if (ops[idx].t === " ") { idx++; continue; }
-    const start = Math.max(0, idx - CTX);
-    let end = idx;
-    let lastChange = idx;
-    while (end < ops.length) {
-      if (ops[end].t !== " ") lastChange = end;
-      if (end - lastChange > CTX * 2 && ops[end].t === " ") break;
-      end++;
-    }
-    end = Math.min(ops.length, lastChange + CTX + 1);
-    const slice = ops.slice(start, end);
-    const oldStart = ops.slice(0, start).filter((o) => o.t !== "+").length + 1;
-    const newStart = ops.slice(0, start).filter((o) => o.t !== "-").length + 1;
-    const oldCount = slice.filter((o) => o.t !== "+").length;
-    const newCount = slice.filter((o) => o.t !== "-").length;
-    hunks.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`);
-    for (const o of slice) hunks.push(o.t + o.line);
-    idx = end;
-    if (hunks.length > 420) { hunks.push("…"); break; }
-  }
-  if (!hunks.length) return "";
-  return `--- a/${relPath}\n+++ b/${relPath}\n${hunks.join("\n")}`;
-}
-
-// ---------- minimal ZIP writer (store/deflate, stdlib zlib) ----------
-
-const CRC_TABLE = (() => {
-  const table = new Int32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c;
-  }
-  return table;
-})();
-
-function crc32(buf) {
-  let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-function buildZip(entries) {
-  // entries: [{ name, data: Buffer }]
-  const chunks = [];
-  const central = [];
-  let offset = 0;
-  for (const e of entries) {
-    const nameBuf = Buffer.from(e.name.replace(/\\/g, "/"), "utf8");
-    const crc = crc32(e.data);
-    const compressed = zlib.deflateRawSync(e.data);
-    const useDeflate = compressed.length < e.data.length;
-    const payload = useDeflate ? compressed : e.data;
-    const method = useDeflate ? 8 : 0;
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x0800, 6); // UTF-8 names
-    local.writeUInt16LE(method, 8);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(payload.length, 18);
-    local.writeUInt32LE(e.data.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    chunks.push(local, nameBuf, payload);
-    const cd = Buffer.alloc(46);
-    cd.writeUInt32LE(0x02014b50, 0);
-    cd.writeUInt16LE(20, 4);
-    cd.writeUInt16LE(20, 6);
-    cd.writeUInt16LE(0x0800, 8);
-    cd.writeUInt16LE(method, 10);
-    cd.writeUInt32LE(crc, 16);
-    cd.writeUInt32LE(payload.length, 20);
-    cd.writeUInt32LE(e.data.length, 24);
-    cd.writeUInt16LE(nameBuf.length, 28);
-    cd.writeUInt32LE(offset, 42);
-    central.push(cd, nameBuf);
-    offset += local.length + nameBuf.length + payload.length;
-  }
-  const cdSize = central.reduce((n, b) => n + b.length, 0);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(cdSize, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...chunks, ...central, end]);
-}
-
-async function projectZipBuffer(project) {
-  const files = await walkProject(project);
-  const entries = [];
-  for (const f of files) {
-    if (f.path.startsWith("dist/") || f.path.startsWith("dist\\")) continue;
-    entries.push({ name: f.path, data: await fsp.readFile(path.join(project, f.path)) });
-  }
-  return buildZip(entries);
-}
-
-// ---------- routes ----------
 
 async function handleApi(req, res, url) {
   const route = url.pathname;
