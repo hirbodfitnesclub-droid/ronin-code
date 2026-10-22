@@ -10,8 +10,9 @@ import { config, getProject, loadAuth, keyList, effectiveAutoMode, effectivePlan
 import { cleanError } from "./util.js";
 import { broadcast } from "./sse.js";
 import { takeSnapshot } from "./snapshots.js";
+import { authManager } from "./auth.js";
 import {
-  runPreviewTurn, runLiveTurn, runJsonPrompt, parseJsonBlock, emitActivity, runActivity,
+  runPreviewTurn, runLiveTurn, runSubscriptionLive, runJsonPrompt, parseJsonBlock, emitActivity, runActivity,
 } from "./engine.js";
 
 let turnRunning = false;
@@ -157,6 +158,40 @@ export async function runTurn(prompt, opts = {}) {
       await executePlannedTurn(opts.plan);
       return;
     }
+    // Subscription turn: a catalog modelId routes through the Ronin
+    // metering proxy instead of the BYOK provider chain. Login is
+    // gated at the route; the subscription lock is enforced here so
+    // the failure surfaces on the turn stream like every other
+    // turn failure.
+    if (opts.modelId) {
+      if (!authManager.state().loggedIn) {
+        broadcast({ type: "turn_error", message: "Please sign in to use your Ronin subscription.", code: "login_required" });
+        return;
+      }
+      // Never-checked-since-boot: try one revalidate before judging.
+      // A network failure leaves the cache stale and the gate below
+      // applies the documented grace (last-known / never-known state
+      // does not lock — see AuthManager.subscriptionLocked).
+      if (!authManager.state().subscription) await authManager.revalidate();
+      if (authManager.subscriptionLocked()) {
+        broadcast({
+          type: "turn_error",
+          message: "Your Ronin subscription is not active for this device.",
+          code: "subscription_locked",
+        });
+        return;
+      }
+      let manifest = null;
+      try { manifest = await takeSnapshot(project); } catch (e) { log.error("snapshot_failed", { error: cleanError(e) }); }
+      await runSubscriptionLive(prompt, project, manifest, {
+        authManager,
+        modelId: opts.modelId,
+        effort: opts.effort,
+        fast: opts.fast,
+        autoMode: effectiveAutoMode(project),
+      });
+      return;
+    }
     // A pending plan + a new user message = a revision request.
     if (pendingPlan && pendingPlan.project === project && !opts.skipPlanGate) {
       const revisedTask = `${pendingPlan.task}\n\nUser revision: ${prompt}`;
@@ -183,7 +218,11 @@ export async function runTurn(prompt, opts = {}) {
     }
   } catch (e) {
     log.error("turn_failed", { turnId, error: cleanError(e) });
-    broadcast({ type: "turn_error", message: cleanError(e) || "Something went wrong during that turn. Please try again." });
+    broadcast({
+      type: "turn_error",
+      message: cleanError(e) || "Something went wrong during that turn. Please try again.",
+      ...(e && typeof e.code === "string" ? { code: e.code } : {}),
+    });
   } finally {
     turnRunning = false;
     log.info("turn_finished", { turnId, durationMs: Date.now() - startedAt });

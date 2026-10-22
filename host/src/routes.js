@@ -8,6 +8,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { HOST_DIR, SNAPSHOTS_DIR } from "./paths.js";
 import { readJsonFile, cleanError } from "./util.js";
 import { broadcast, addSseClient, removeSseClient, helloFrame } from "./sse.js";
@@ -31,9 +32,105 @@ import {
   runTurn, matureIdea, isTurnRunning, setTurnRunning, getPendingPlan, setPendingPlan,
 } from "./turns.js";
 import { sendJson, readBody } from "./http.js";
+import { authManager, AuthError } from "./auth.js";
+import { CATALOG } from "./catalog.js";
+
+const CATALOG_IDS = new Set(CATALOG.map((m) => m.id));
+
+/** The auth slice shared by /api/status and /api/auth/state. */
+function authPayload() {
+  const s = authManager.state();
+  return { loggedIn: s.loggedIn, user: s.user, subscription: s.subscription };
+}
+
+/**
+ * The one login gate for every route that runs the agent or spends
+ * (turns, idea execution, plan execution, publish/export). Status,
+ * settings, auth and static routes stay open so the GUI can always
+ * reach the sign-in flow itself.
+ */
+function requireAuth(res) {
+  if (authManager.state().loggedIn) return true;
+  sendJson(res, 401, { error: "login_required" });
+  return false;
+}
+
+function sendAuthError(res, e) {
+  if (e instanceof AuthError) return sendJson(res, e.status, { error: e.code });
+  log.error("auth_route_failed", { error: cleanError(e) });
+  return sendJson(res, 502, { error: "auth_unreachable" });
+}
 
 export async function handleApi(req, res, url) {
   const route = url.pathname;
+
+  // ---------- Ronin account (auth) ----------
+
+  if (route === "/api/auth/state" && req.method === "GET") {
+    return sendJson(res, 200, { ...authPayload(), panelUrl: authManager.panelUrl() });
+  }
+
+  if (route === "/api/auth/open-panel" && req.method === "POST") {
+    const panel = authManager.panelUrl();
+    const target = `${panel}${panel.includes("?") ? "&" : "?"}from=app`;
+    try {
+      const cmd =
+        process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
+      const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
+      const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+      child.on("error", () => {});
+      child.unref();
+    } catch (e) {
+      log.error("open_panel_failed", { error: cleanError(e) });
+    }
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (route === "/api/auth/exchange-code" && req.method === "POST") {
+    const body = await readBody(req).catch(() => null);
+    if (!body || typeof body.code !== "string" || !body.code.trim())
+      return sendJson(res, 400, { error: "code_required" });
+    try {
+      const { user } = await authManager.exchangeCode(body.code.trim());
+      return sendJson(res, 200, { ok: true, user });
+    } catch (e) {
+      return sendAuthError(res, e);
+    }
+  }
+
+  if (route === "/api/auth/otp/request" && req.method === "POST") {
+    const body = await readBody(req).catch(() => null);
+    if (!body || typeof body.phone !== "string" || !body.phone.trim())
+      return sendJson(res, 400, { error: "phone_required" });
+    try {
+      const result = await authManager.requestOtp(body.phone.trim());
+      return sendJson(res, 200, result && typeof result === "object" ? result : { ok: true });
+    } catch (e) {
+      return sendAuthError(res, e);
+    }
+  }
+
+  if (route === "/api/auth/otp/verify" && req.method === "POST") {
+    const body = await readBody(req).catch(() => null);
+    if (!body || typeof body.phone !== "string" || !body.phone.trim() || typeof body.code !== "string" || !body.code.trim())
+      return sendJson(res, 400, { error: "phone_and_code_required" });
+    try {
+      const { user } = await authManager.verifyOtp(body.phone.trim(), body.code.trim());
+      return sendJson(res, 200, { ok: true, user });
+    } catch (e) {
+      return sendAuthError(res, e);
+    }
+  }
+
+  if (route === "/api/auth/logout" && req.method === "POST") {
+    await authManager.logout();
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (route === "/api/auth/refresh-status" && req.method === "POST") {
+    const subscription = await authManager.revalidate();
+    return sendJson(res, 200, { ok: true, subscription });
+  }
 
   if (route === "/api/providers" && req.method === "GET") {
     return sendJson(res, 200, providersView());
@@ -56,6 +153,11 @@ export async function handleApi(req, res, url) {
       envAccess: getProject() ? config.envAllowedProjects[path.resolve(getProject())] === true : false,
       budgetCapUsd: config.budgetCapUsd,
       failover: config.failover,
+      auth: authPayload(),
+      enabledModels: config.enabledModels,
+      activeModelId: config.activeModelId,
+      theme: config.theme,
+      panelUrl: authManager.panelUrl(),
     });
   }
 
@@ -151,6 +253,32 @@ export async function handleApi(req, res, url) {
       const key = path.resolve(getProject());
       if (body.envAccess === true) config.envAllowedProjects[key] = true;
       else delete config.envAllowedProjects[key];
+    }
+    if (body.enabledModels !== undefined && Array.isArray(body.enabledModels)) {
+      // Only catalog models can be enabled — anything else is dropped.
+      config.enabledModels = body.enabledModels.filter((id) => CATALOG_IDS.has(id));
+    }
+    if (body.activeModelId !== undefined) {
+      config.activeModelId =
+        typeof body.activeModelId === "string" && CATALOG_IDS.has(body.activeModelId)
+          ? body.activeModelId
+          : null;
+    }
+    if (body.theme !== undefined && (body.theme === "dark" || body.theme === "light")) {
+      config.theme = body.theme;
+    }
+    for (const key of ["roninServerUrl", "panelUrl"]) {
+      if (body[key] !== undefined) {
+        if (body[key] === "" || body[key] === null) {
+          config[key] = null;
+        } else if (typeof body[key] === "string") {
+          let parsed;
+          try { parsed = new URL(body[key].trim()); } catch { return sendJson(res, 400, { error: `The ${key} URL is not a valid URL` }); }
+          if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+            return sendJson(res, 400, { error: `The ${key} URL must start with http:// or https://` });
+          config[key] = body[key].trim().replace(/\/+$/, "");
+        }
+      }
     }
     saveConfig();
     return sendJson(res, 200, { ok: true, provider: config.provider, model: currentModel(), providers: providersView() });
@@ -319,6 +447,9 @@ export async function handleApi(req, res, url) {
   }
 
   if (route === "/api/plan/approve" && req.method === "POST") {
+    // Approving a plan executes it — an agent-running route, so gated
+    // like /api/turn (see requireAuth).
+    if (!requireAuth(res)) return;
     const body = await readBody(req).catch(() => ({}));
     if (!getPendingPlan() || body.planId !== getPendingPlan().id)
       return sendJson(res, 404, { error: "That plan is no longer pending", code: "not_found" });
@@ -352,6 +483,7 @@ export async function handleApi(req, res, url) {
   }
 
   if (route === "/api/ideas/build" && req.method === "POST") {
+    if (!requireAuth(res)) return;
     const body = await readBody(req).catch(() => null);
     if (!body || typeof body.idea !== "string" || !body.idea.trim())
       return sendJson(res, 400, { error: "An idea is required", code: "prompt_required" });
@@ -384,6 +516,8 @@ export async function handleApi(req, res, url) {
   }
 
   if (route === "/api/projects/export" && req.method === "GET") {
+    // Publish surface — gated like the other agent/spend routes.
+    if (!requireAuth(res)) return;
     if (!getProject()) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
     const zip = await projectZipBuffer(getProject());
     const name = `${path.basename(getProject())}.zip`;
@@ -396,6 +530,7 @@ export async function handleApi(req, res, url) {
   }
 
   if (route === "/api/projects/export-dist" && req.method === "POST") {
+    if (!requireAuth(res)) return;
     if (!getProject()) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
     const dist = path.join(getProject(), "dist");
     const files = await walkProject(getProject());
@@ -424,6 +559,7 @@ export async function handleApi(req, res, url) {
   }
 
   if (route === "/api/turn" && req.method === "POST") {
+    if (!requireAuth(res)) return;
     const body = await readBody(req).catch(() => null);
     if (!body || typeof body.prompt !== "string" || !body.prompt.trim())
       return sendJson(res, 400, { error: "A prompt is required", code: "prompt_required" });
@@ -431,10 +567,26 @@ export async function handleApi(req, res, url) {
     if (isTurnRunning()) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
     if (config.budgetCapUsd && sessionTotals().costUsd >= config.budgetCapUsd)
       return sendJson(res, 402, { error: "Your budget cap has been reached. Raise it in Settings to keep going.", code: "budget_exceeded" });
+    // Optional subscription routing: a catalog modelId switches the
+    // turn to the Ronin subscription provider (see turns.js). Login is
+    // already gated above; here we only validate the model is enabled
+    // for this user and remember it as the active model.
+    let subscriptionOpts = null;
+    if (body.modelId !== undefined && body.modelId !== null) {
+      if (typeof body.modelId !== "string" || !config.enabledModels.includes(body.modelId))
+        return sendJson(res, 400, { error: "model_not_enabled", code: "model_not_enabled" });
+      subscriptionOpts = {
+        modelId: body.modelId,
+        effort: typeof body.effort === "string" ? body.effort : undefined,
+        fast: body.fast === true,
+      };
+      config.activeModelId = body.modelId;
+      saveConfig();
+    }
     setTurnRunning(true);
     const turnId = crypto.randomUUID();
     sendJson(res, 200, { ok: true, turnId });
-    runTurn(body.prompt.trim()).catch((e) => {
+    runTurn(body.prompt.trim(), subscriptionOpts || {}).catch((e) => {
       log.error("turn_request_failed", { error: cleanError(e) });
       setTurnRunning(false);
     });

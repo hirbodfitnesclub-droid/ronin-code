@@ -35,7 +35,13 @@ export function finalizeTurnUsage({ providerId, modelId, apiKey, usage, promptTe
     outputTokens = Math.ceil((replyText || "").length / 4);
     estimated = true;
   }
-  const { costUsd, estimated: priceEstimated } = priceTurn(modelId, inputTokens, outputTokens, usage?.costTotal);
+  // Subscription turns are metered in tokens server-side; the USD cost
+  // is not known locally and must never be invented from the BYOK price
+  // table — record the tokens with a zero cost.
+  const isSubscription = providerId === "ronin-subscription";
+  const { costUsd, estimated: priceEstimated } = isSubscription
+    ? { costUsd: 0, estimated: false }
+    : priceTurn(modelId, inputTokens, outputTokens, usage?.costTotal);
   const rec = {
     ts: new Date().toISOString(),
     provider: providerId,

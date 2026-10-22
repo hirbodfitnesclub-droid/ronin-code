@@ -7,11 +7,11 @@ import { log } from "./log.js";
 import fs from "node:fs";
 import path from "node:path";
 import { ENGINE_DIR, SESSIONS_DIR } from "./paths.js";
-import { config, loadAuth } from "./config.js";
+import { config, loadAuth, currentModel } from "./config.js";
 import { sleep, cleanError } from "./util.js";
 import { broadcast } from "./sse.js";
 import { makeGuardExtension, collectSecretValues } from "./guard.js";
-import { buildAttempts, isFailoverError } from "./router.js";
+import { buildAttempts, isFailoverError, buildSubscriptionAttempt, classifyProxyError, SUBSCRIPTION_PROVIDER_ID } from "./router.js";
 import { finalizeTurnUsage } from "./cost.js";
 import { diffAgainstManifest } from "./snapshots.js";
 
@@ -68,24 +68,46 @@ export const TOOL_KIND = {
 // USD per 1M tokens. `multiplier` scales consumption (subscription-style
 // accounting, mirrored into cost so expensive models weigh more).
 
-export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, manifest, autoMode, onProgress, state }) {
+export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, manifest, autoMode, onProgress, state, baseUrl, modelMeta, thinkingLevel, thinkingLevelMap, fast }) {
   // Embedded engine — actual installed SDK API (v1.3.0, see ENGINE.md).
   const engine = await import("@earendil-works/pi-coding-agent");
   const { createAgentSession, SessionManager, SettingsManager, ModelRuntime, DefaultResourceLoader } = engine;
 
-  if (providerId === "custom") {
-    // Register the user's own OpenAI-compatible endpoint with the engine.
-    // The key itself never lands in models.json — it is referenced through
-    // an environment variable that only this host process sets.
-    if (!config.baseUrl) throw new Error("No endpoint URL is configured for the custom provider.");
-    process.env.RONIN_CUSTOM_KEY = apiKey;
+  if (providerId === "custom" || providerId === SUBSCRIPTION_PROVIDER_ID) {
+    // Register an OpenAI-compatible endpoint with the engine: the user's
+    // own endpoint ("custom") or the Ronin subscription proxy. The key
+    // itself never lands in models.json — it is referenced through an
+    // environment variable that only this host process sets.
+    const isSubscription = providerId === SUBSCRIPTION_PROVIDER_ID;
+    const effectiveBaseUrl = isSubscription ? baseUrl : config.baseUrl;
+    if (!effectiveBaseUrl) throw new Error("No endpoint URL is configured for the custom provider.");
+    const envName = isSubscription ? "RONIN_SUBSCRIPTION_KEY" : "RONIN_CUSTOM_KEY";
+    process.env[envName] = apiKey;
+    const modelEntry = isSubscription
+      ? {
+          id: modelId,
+          name: modelMeta?.name || modelId,
+          reasoning: true,
+          // The proxy speaks text/image inputs; other catalog modalities
+          // are not engine input types.
+          input: (modelMeta?.inputs || ["text"]).filter((i) => i === "text" || i === "image"),
+          contextWindow: modelMeta?.context || 200000,
+          maxTokens: 32768,
+          // Metered in tokens server-side; zero local price so the
+          // engine never invents a USD cost for subscription usage.
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          compat: { supportsReasoningEffort: true },
+          ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+          ...(fast ? { headers: { "x-ronin-fast": "1" } } : {}),
+        }
+      : { id: modelId, name: modelId, contextWindow: 1048576, maxTokens: 32768 };
     const modelsDoc = {
       providers: {
-        custom: {
-          baseUrl: config.baseUrl,
+        [providerId]: {
+          baseUrl: effectiveBaseUrl,
           api: "openai-completions",
-          apiKey: "$RONIN_CUSTOM_KEY",
-          models: [{ id: modelId, name: modelId, contextWindow: 1048576, maxTokens: 32768 }],
+          apiKey: `$${envName}`,
+          models: [modelEntry],
         },
       },
     };
@@ -124,6 +146,10 @@ export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, proj
     sessionManager,
     settingsManager,
     resourceLoader,
+    // Only subscription attempts pass a thinking level (it becomes the
+    // proxy's reasoning_effort); legacy BYOK sessions keep the engine
+    // default exactly as before.
+    ...(thinkingLevel ? { thinkingLevel } : {}),
   });
 
   const toolActivities = new Map(); // toolCallId -> {activityId, kind}
@@ -267,6 +293,52 @@ export async function runLiveTurn(prompt, project, manifest, { autoMode, onProgr
     }
   }
   if (lastError) throw lastError;
+}
+
+/**
+ * One subscription turn through the Ronin metering proxy. Single
+ * attempt (no BYOK failover chain — the proxy is the only route), with
+ * proxy failures mapped to stable turn_error codes by the caller:
+ * 402 → 'insufficient_credit', 401 → one forced revalidate, then
+ * 'login_required' if the session was cleared.
+ */
+export async function runSubscriptionLive(prompt, project, manifest, { authManager, modelId, effort, fast, autoMode } = {}) {
+  const attempt = await buildSubscriptionAttempt(authManager, { modelId, effort, fast });
+  const state = { visible: false };
+  try {
+    const r = await runLiveAttempt({ prompt, ...attempt, project, manifest, autoMode, state });
+    // apiKey is the session token — never feed it to per-key stats.
+    finalizeTurnUsage({ providerId: attempt.providerId, modelId: attempt.modelId, apiKey: null, usage: r.usage, promptText: prompt, replyText: r.finalText });
+    broadcast({ type: "assistant_message", text: r.finalText });
+    broadcast({ type: "changes", files: r.changes });
+    lastTurnDiff = { project, manifest, changes: r.changes };
+    broadcast({ type: "turn_done" });
+    return;
+  } catch (e) {
+    const msg = cleanError(e);
+    finalizeTurnUsage({ providerId: attempt.providerId, modelId: attempt.modelId, apiKey: null, usage: null, promptText: prompt, replyText: "", error: msg });
+    const kind = classifyProxyError(msg) || (e && e.code === "login_required" ? "login_required" : null);
+    if (kind === "insufficient_credit") {
+      const err = new Error("Your Ronin credit has run out. Buy a credit pack to keep going.");
+      err.code = "insufficient_credit";
+      throw err;
+    }
+    if (kind === "model_disabled") {
+      const err = new Error("That model is not available on your subscription right now.");
+      err.code = "model_disabled";
+      throw err;
+    }
+    if (kind === "unauthorized" || kind === "login_required") {
+      await authManager.revalidate();
+      if (!authManager.state().loggedIn) {
+        const err = new Error("Your Ronin session has ended. Please sign in again.");
+        err.code = "login_required";
+        throw err;
+      }
+      throw e;
+    }
+    throw e;
+  }
 }
 
 // ---------- plan mode ----------

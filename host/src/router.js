@@ -5,6 +5,7 @@
 
 import { config, providerById, keyList, currentModel } from "./config.js";
 import { loadUsage, saveUsage, keyIdOf } from "./usage.js";
+import { CATALOG } from "./catalog.js";
 
 export async function testProviderKey(providerId, apiKey, baseUrl) {
   const ctrl = new AbortController();
@@ -41,6 +42,75 @@ export async function testProviderKey(providerId, apiKey, baseUrl) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------- Ronin subscription provider ----------
+// Built-in provider backed by the Ronin server's metering proxy
+// (POST /v1/chat/completions on the account server). It is NOT a BYOK
+// provider: there is no stored key — the session access token is
+// resolved at request time via resolveApiKey (AuthManager), so token
+// rotation/revocation is picked up on every turn.
+
+export const SUBSCRIPTION_PROVIDER_ID = "ronin-subscription";
+
+export const SUBSCRIPTION_PROVIDER = {
+  id: SUBSCRIPTION_PROVIDER_ID,
+  label: "Ronin Subscription",
+  // Async key hook: providers elsewhere are sync objects with static
+  // keys; this one awaits a fresh session token instead.
+  resolveApiKey: async (authManager) => authManager.ensureFreshAccess(),
+  baseUrl: (authManager) => `${authManager.serverUrl()}/v1`,
+};
+
+export const catalogModel = (modelId) => CATALOG.find((m) => m.id === modelId) || null;
+
+export async function buildSubscriptionAttempt(authManager, { modelId, effort, fast } = {}) {
+  const apiKey = await SUBSCRIPTION_PROVIDER.resolveApiKey(authManager);
+  if (!apiKey) {
+    const err = new Error("Your Ronin session has ended. Please sign in again.");
+    err.code = "login_required";
+    throw err;
+  }
+  const meta = catalogModel(modelId);
+  const { thinkingLevel, thinkingLevelMap } = effortToThinking(effort, meta);
+  return {
+    providerId: SUBSCRIPTION_PROVIDER_ID,
+    apiKey,
+    modelId,
+    baseUrl: SUBSCRIPTION_PROVIDER.baseUrl(authManager),
+    modelMeta: meta,
+    thinkingLevel,
+    thinkingLevelMap,
+    fast: fast === true,
+  };
+}
+
+const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * Map a catalog reasoning effort to the engine's thinking level plus
+ * the wire value it should produce. 'upstream'/unset → level 'off'
+ * with no map entry, which makes the engine omit reasoning_effort
+ * entirely so the upstream default applies. 'none' is a real wire
+ * value for several catalog families: level 'off' mapped to 'none'
+ * still emits reasoning_effort: "none". Anything else the engine
+ * doesn't know (e.g. MiniMax 'thinking') rides the medium level with
+ * an explicit map entry.
+ */
+export function effortToThinking(effort, _meta) {
+  if (!effort || effort === "upstream") return { thinkingLevel: "off", thinkingLevelMap: undefined };
+  if (PI_THINKING_LEVELS.has(effort)) return { thinkingLevel: effort, thinkingLevelMap: undefined };
+  if (effort === "none") return { thinkingLevel: "off", thinkingLevelMap: { off: "none" } };
+  return { thinkingLevel: "medium", thinkingLevelMap: { medium: effort } };
+}
+
+/** Classify a metering-proxy failure surfaced through the engine. */
+export function classifyProxyError(message) {
+  const msg = String(message || "");
+  if (/insufficient_credit/.test(msg) || /\b402\b/.test(msg)) return "insufficient_credit";
+  if (/\b401\b/.test(msg) || /session_revoked|unauthorized/i.test(msg)) return "unauthorized";
+  if (/model_disabled/.test(msg) || /\b403\b/.test(msg)) return "model_disabled";
+  return null;
 }
 
 // ---------- starter project ----------
