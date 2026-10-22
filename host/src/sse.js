@@ -19,3 +19,9 @@ export function broadcast(obj) {
 export function addSseClient(res) { sseClients.add(res); }
 export function removeSseClient(res) { sseClients.delete(res); }
 export function bumpEventSeq() { return ++eventSeq; }
+
+/** The hello frame that opens every stream (shares the event sequence). */
+export function helloFrame() {
+  const hello = { id: ++eventSeq, type: "hello", apiVersion: 1 };
+  return `id: ${hello.id}\ndata: ${JSON.stringify(hello)}\n\n`;
+}
