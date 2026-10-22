@@ -27,6 +27,8 @@ export const CONFIG_PATH = path.join(RONIN_HOME, "config.json");
 
 export const AUTH_PATH = path.join(RONIN_HOME, "auth.json");
 
+export const CREDENTIALS_PATH = path.join(RONIN_HOME, "credentials.json");
+
 // Keep every engine-native file inside the Ronin data dir (never ~/.pi).
 
 process.env.PI_CODING_AGENT_DIR = ENGINE_DIR;

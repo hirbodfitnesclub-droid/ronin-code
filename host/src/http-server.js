@@ -11,6 +11,7 @@ import { GUI_DIST, VERSION, RONIN_HOME } from "./paths.js";
 import { cleanError } from "./util.js";
 import { config, getProject, loadAuth, currentModel } from "./config.js";
 import { handleApi } from "./routes.js";
+import { initAuthBackground } from "./auth.js";
 import { TOKEN, mimeFor, sendJson, sendText, hostAllowed, tokenOk, safeJoin } from "./http.js";
 
 const PORT = Number(process.env.PORT || 7331);
@@ -78,6 +79,9 @@ export async function servePreview(req, res, url) {
 }
 
 export function startHost() {
+  // Account session: background revalidation (boot + every 6h) without
+  // blocking the listener.
+  initAuthBackground();
   const server = http.createServer(async (req, res) => {
   try {
     if (!hostAllowed(req)) return sendJson(res, 403, { error: "Forbidden host" });

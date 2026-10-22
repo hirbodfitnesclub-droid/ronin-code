@@ -48,6 +48,15 @@ export function loadConfig() {
       c.projectModes && typeof c.projectModes === "object" && !Array.isArray(c.projectModes)
         ? c.projectModes
         : {},
+    // Subscription / account wiring (Ronin server + web panel).
+    enabledModels: Array.isArray(c.enabledModels)
+      ? c.enabledModels.filter((id) => typeof id === "string" && id)
+      : [],
+    activeModelId: typeof c.activeModelId === "string" && c.activeModelId ? c.activeModelId : null,
+    theme: c.theme === "light" ? "light" : "dark",
+    roninServerUrl:
+      typeof c.roninServerUrl === "string" && c.roninServerUrl ? c.roninServerUrl : null,
+    panelUrl: typeof c.panelUrl === "string" && c.panelUrl ? c.panelUrl : null,
   };
 }
 
@@ -127,6 +136,11 @@ export function saveConfig() {
     budgetCapUsd: config.budgetCapUsd,
     envAllowedProjects: config.envAllowedProjects,
     projectModes: config.projectModes,
+    enabledModels: config.enabledModels,
+    activeModelId: config.activeModelId,
+    theme: config.theme,
+    roninServerUrl: config.roninServerUrl,
+    panelUrl: config.panelUrl,
   });
 }
 

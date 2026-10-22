@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test:unit": "node --test test/unit.test.mjs"
+    "test:unit": "node --test test/unit.test.mjs test/auth.test.mjs"
   },
   "engines": {
     "node": ">=20"
