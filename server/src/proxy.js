@@ -1,5 +1,5 @@
 import { requireRateLimit } from './ratelimit.js';
-import { getMultiplier } from './settings.js';
+import { getMultiplier, getModelEntry } from './settings.js';
 import { reserveHold, commitHold, releaseHold, spendableTokens } from './ledger.js';
 import { HttpError, badRequest, paymentRequired } from './util.js';
 import { readBody, sendJson } from './http.js';
@@ -55,6 +55,12 @@ export async function handleChatCompletions(db, cfg, req, res, user) {
 
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   try {
+    // Admin per-model enable/disable (PRD §6.7): a disabled model is refused
+    // before any hold is reserved — no charge, no upstream call.
+    const entry = await getModelEntry(db, cfg, body.model);
+    if (entry && entry.enabled === false) {
+      throw new HttpError(403, 'model_disabled', `Model ${body.model} is disabled by the admin.`);
+    }
     const multiplier = await getMultiplier(db, cfg, body.model);
     const maxCompletion = Number(body.max_tokens ?? body.max_completion_tokens ?? 1024);
     const reservedTokens = Math.max(1, Math.ceil((estimatePromptTokens(body) + maxCompletion) * multiplier));

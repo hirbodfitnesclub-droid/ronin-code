@@ -157,6 +157,42 @@ Admin API lives under `/admin-api/*` **on the admin listener only** (overview,
 users + charge/toggle, orders queue + review, settings: card/packs/models/
 token-config, audit).
 
+## Admin panel (React console, PRD §6)
+
+The standalone admin app serves the React console built from
+`web/admin-panel/` (Vite build output in `web/admin-panel/dist`, Persian RTL,
+same design tokens as the product). It replaces the old vanilla UI.
+
+- **Access (Liro capability model):** OWNER = phone in `ADMIN_PHONES` (all
+  capabilities; claim approval, staff editing and the audit viewer are
+  owner-only). FINANCE STAFF live in the `finance_staff` settings document
+  (`[{phone, caps[]}]`) and log in with the same OTP; every route enforces its
+  capability server-side: `finance_view`, `finance_user`, `risk_manage`,
+  `expense_write`, `refund_write`, `policy_write`, `export`. (Liro's
+  referral/KYC/payout caps do not exist — there is no referral system,
+  PRD §9.1.) Every sensitive action writes an `admin_audit` row.
+- **Review queue + receipts:** claims carry `receipt_path` + `receipt_sha256`
+  (migration `20261022000003_admin_panel.sql`, additive — see the merge flag
+  below). `GET /admin-api/orders/:id/receipt` serves the image from the local
+  `RECEIPTS_DIR` (dev) or via a short-lived signed URL into the private
+  Supabase Storage bucket (Cloud, service-role key stays server-side). The
+  queue flags claims whose image hash also appears on another claim
+  (passive duplicate warning — the human still decides).
+- **Refunds:** `POST /admin-api/orders/:id/refund` → `refund_order` RPC:
+  atomic, idempotent on the client-supplied key, proportional token removal
+  capped at the order remainder and at the user's balance; a full refund
+  flips the order to `refunded`.
+- **Finance console:** P&L over orders/refunds/expenses, expenses CRUD,
+  named periods, CSV export — deliberately **no** bank-statement
+  import/reconciliation (owner decision, PRD §9.2).
+- **Analytics + AI analyst:** dashboards from the books (growth, revenue,
+  consumption, top models, claim outcomes) and an on-demand analyst chat
+  (`POST /admin-api/analyst/chat`) that ships aggregate context to the cheap
+  OpenAI-compatible gateway (`ANALYST_*`, falling back to `UPSTREAM_*`).
+  On-demand only — no cron, no daily reports (PRD §9.3).
+- **User dossier extras:** devices list + revoke, risk flags lifecycle —
+  driven by the same `devices` registry that powers daily revalidation.
+
 ## Honest gaps
 
 - **Streaming** completions are proxied live and settled from the final usage
@@ -178,3 +214,9 @@ token-config, audit).
   users are governed by our 60s cooldown.
 - Admin MFA beyond phone-OTP (TOTP) and PSP (online gateway) payments are
   future work — card-to-card is the launch rail, per the owner.
+- **Merge flag (receipt claims):** the receipt-only claim rework was landing
+  concurrently on `supabase-migration`; on this branch migration 3 adds the
+  receipt columns additively and the admin side fully reads them, but claim
+  *creation* (`create_claim` RPC + the user API) still takes the legacy form
+  fields until the two branches merge — at merge time keep migration 3's
+  columns/RPCs and take the rework's creation side.
