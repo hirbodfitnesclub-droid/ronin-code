@@ -2,195 +2,46 @@
 // Plain ESM Node (>=20), node:http + stdlib only. The embedded agent engine
 // is loaded lazily, only for live turns (see ENGINE.md for the exact SDK API).
 
-import http from "node:http";
-import fs from "node:fs";
-import fsp from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
-import crypto from "node:crypto";
-import zlib from "node:zlib";
-import { fileURLToPath } from "node:url";
 
-const HOST_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const GUI_DIST = path.resolve(HOST_DIR, "..", "gui", "dist");
-const VERSION = "0.1.0";
+import http from "node:http";
+
+import fs from "node:fs";
+
+import fsp from "node:fs/promises";
+
+import path from "node:path";
+
+import os from "node:os";
+
+import crypto from "node:crypto";
+
+import zlib from "node:zlib";
+
+import { fileURLToPath } from "node:url";
+import { GUI_DIST, VERSION, RONIN_HOME, ENGINE_DIR, SESSIONS_DIR, SNAPSHOTS_DIR } from "./paths.js";
+import { sleep, readJsonFile, cleanError } from "./util.js";
+import { broadcast, sseClients, bumpEventSeq } from "./sse.js";
+import {
+  PROVIDERS, providerById, config, getProject, setProject, saveConfig,
+  projectMode, effectiveAutoMode, effectivePlanMode,
+  loadAuth, saveAuth, keyList, currentModel, providersView,
+} from "./config.js";
+import { loadUsage, saveUsage, keyIdOf, recordKeyUse, recordTurnUsage, sessionTotals } from "./usage.js";
+
 const PORT = Number(process.env.PORT || 7331);
+
 const TOKEN = crypto.randomBytes(24).toString("hex");
 
-const RONIN_HOME = process.env.RONIN_HOME
-  ? path.resolve(process.env.RONIN_HOME)
-  : path.join(os.homedir(), ".ronin-code");
-const ENGINE_DIR = path.join(RONIN_HOME, "engine");
-const SESSIONS_DIR = path.join(RONIN_HOME, "sessions");
-const SNAPSHOTS_DIR = path.join(RONIN_HOME, "snapshots");
-const CONFIG_PATH = path.join(RONIN_HOME, "config.json");
-const AUTH_PATH = path.join(RONIN_HOME, "auth.json");
-
-// Keep every engine-native file inside the Ronin data dir (never ~/.pi).
-process.env.PI_CODING_AGENT_DIR = ENGINE_DIR;
-
-const PROVIDERS = [
-  { id: "anthropic", label: "Anthropic", defaultModel: "claude-sonnet-4-5" },
-  { id: "openai", label: "OpenAI", defaultModel: "gpt-5" },
-  { id: "google", label: "Google", defaultModel: "gemini-2.5-pro" },
-  { id: "openrouter", label: "OpenRouter", defaultModel: "openai/gpt-5" },
-  { id: "custom", label: "Custom endpoint", defaultModel: "" },
-];
-const providerById = (id) => PROVIDERS.find((p) => p.id === id);
-
-// ---------- small helpers ----------
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function readJsonFile(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return fallback;
-  }
-}
-function writeJsonFile0600(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
-  try { fs.chmodSync(file, 0o600); } catch {}
-}
-function loadConfig() {
-  const c = readJsonFile(CONFIG_PATH, {});
-  return {
-    provider: providerById(c.provider) ? c.provider : "anthropic",
-    model: typeof c.model === "string" && c.model ? c.model : null,
-    project: typeof c.project === "string" && c.project ? c.project : null,
-    baseUrl: typeof c.baseUrl === "string" && c.baseUrl ? c.baseUrl : null,
-    // v1 fields
-    onboarded: c.onboarded === true,
-    language: c.language === "fa" ? "fa" : "en",
-    autoMode: c.autoMode === true,
-    planMode: c.planMode === true,
-    failoverOrder: Array.isArray(c.failoverOrder)
-      ? c.failoverOrder.filter((id) => providerById(id))
-      : [],
-    failover: c.failover !== false,
-    budgetCapUsd:
-      typeof c.budgetCapUsd === "number" && c.budgetCapUsd > 0 ? c.budgetCapUsd : null,
-    envAllowedProjects:
-      c.envAllowedProjects && typeof c.envAllowedProjects === "object" && !Array.isArray(c.envAllowedProjects)
-        ? c.envAllowedProjects
-        : {},
-    projectModes:
-      c.projectModes && typeof c.projectModes === "object" && !Array.isArray(c.projectModes)
-        ? c.projectModes
-        : {},
-  };
-}
-function loadAuth() {
-  const a = readJsonFile(AUTH_PATH, {});
-  return a && typeof a === "object" && !Array.isArray(a) ? a : {};
-}
-/** auth.json maps provider -> key string (legacy) or array of key strings. */
-function keyList(v) {
-  if (typeof v === "string") return v ? [v] : [];
-  if (Array.isArray(v)) return v.filter((k) => typeof k === "string" && k.length > 0);
-  return [];
-}
-function saveAuth(auth) {
-  // Normalize to arrays on disk; keep file 0600 like all Ronin secrets.
-  const out = {};
-  for (const [k, v] of Object.entries(auth)) {
-    const list = keyList(v);
-    if (list.length) out[k] = list;
-  }
-  writeJsonFile0600(AUTH_PATH, out);
-}
-function maskedKey(key) {
-  if (!key || typeof key !== "string") return null;
-  return "••••" + key.slice(-4);
-}
-function providersView() {
-  const auth = loadAuth();
-  const usage = loadUsage();
-  return PROVIDERS.map((p) => {
-    const keys = keyList(auth[p.id]);
-    return {
-      id: p.id,
-      label: p.label,
-      defaultModel: p.defaultModel,
-      hasKey: keys.length > 0,
-      maskedKey: maskedKey(keys[0]),
-      keys: keys.map((k, i) => ({
-        index: i,
-        maskedKey: maskedKey(k),
-        ...(keyStats(usage, p.id, k)),
-      })),
-      ...(p.id === "custom" ? { baseUrl: config.baseUrl || "" } : {}),
-    };
-  });
-}
-function currentModel(cfg = config) {
-  return cfg.model || providerById(cfg.provider).defaultModel;
-}
-function cleanError(err) {
-  let msg = (err && err.message) || String(err || "Unknown error");
-  // Never surface internal engine branding/names to the user.
-  msg = msg.replace(/@earendil-works\/[a-z-]+/gi, "Ronin Code engine");
-  msg = msg.replace(/\bpi-coding-agent\b/gi, "Ronin Code engine");
-  return msg.slice(0, 500);
-}
-
-fs.mkdirSync(RONIN_HOME, { recursive: true });
-fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-fs.mkdirSync(ENGINE_DIR, { recursive: true });
-
-let config = loadConfig();
-let currentProject =
-  config.project && fs.existsSync(config.project) && fs.statSync(config.project).isDirectory()
-    ? config.project
-    : null;
-
-function saveConfig() {
-  writeJsonFile0600(CONFIG_PATH, {
-    provider: config.provider,
-    model: currentModel(),
-    project: currentProject,
-    baseUrl: config.baseUrl || null,
-    onboarded: config.onboarded,
-    language: config.language,
-    autoMode: config.autoMode,
-    planMode: config.planMode,
-    failoverOrder: config.failoverOrder,
-    failover: config.failover,
-    budgetCapUsd: config.budgetCapUsd,
-    envAllowedProjects: config.envAllowedProjects,
-    projectModes: config.projectModes,
-  });
-}
-
-/** Per-project execution mode: 'auto' | 'plan' | null (fall back to global toggles). */
-function projectMode(project = currentProject) {
-  if (!project) return null;
-  const m = config.projectModes[path.resolve(project)];
-  return m === "auto" || m === "plan" ? m : null;
-}
-function effectiveAutoMode(project = currentProject) {
-  const pm = projectMode(project);
-  if (pm === "auto") return true;
-  if (pm === "plan") return false;
-  return config.autoMode;
-}
-function effectivePlanMode(project = currentProject) {
-  const pm = projectMode(project);
-  if (pm === "plan") return true;
-  if (pm === "auto") return false; // "just build it" — no plan gate in auto mode
-  return config.planMode;
-}
-
-// ---------- snapshots ----------
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
+
 const MAX_FILE = 5 * 1024 * 1024;
+
 const MAX_FILES = 2000;
 
 function projectHash(project) {
   return crypto.createHash("sha256").update(path.resolve(project)).digest("hex").slice(0, 16);
 }
+
 async function walkProject(project) {
   const files = [];
   async function walk(dir) {
@@ -256,18 +107,7 @@ async function diffAgainstManifest(project, manifest) {
 }
 
 // ---------- SSE ----------
-const sseClients = new Set();
-let eventSeq = 0;
-function broadcast(obj) {
-  const evt = { id: ++eventSeq, ...obj };
-  const data = `id: ${evt.id}\ndata: ${JSON.stringify(evt)}\n\n`;
-  for (const res of sseClients) {
-    try { res.write(data); } catch { sseClients.delete(res); }
-  }
-  return evt;
-}
 
-// ---------- HTTP helpers ----------
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -288,6 +128,7 @@ const MIME = {
   ".xml": "application/xml",
   ".pdf": "application/pdf",
 };
+
 const mimeFor = (file) => MIME[path.extname(file).toLowerCase()] || "application/octet-stream";
 
 function sendJson(res, status, obj) {
@@ -295,10 +136,12 @@ function sendJson(res, status, obj) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
   res.end(body);
 }
+
 function sendText(res, status, text, type = "text/plain; charset=utf-8") {
   res.writeHead(status, { "Content-Type": type, "Content-Length": Buffer.byteLength(text) });
   res.end(text);
 }
+
 async function readBody(req) {
   const chunks = [];
   let size = 0;
@@ -310,6 +153,7 @@ async function readBody(req) {
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
+
 function hostAllowed(req) {
   const host = req.headers.host;
   if (!host) return false;
@@ -323,15 +167,18 @@ function hostAllowed(req) {
   }
   return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
 }
+
 function tokenOk(req, url) {
   return req.headers["x-ronin-token"] === TOKEN || url.searchParams.get("token") === TOKEN;
 }
+
 function safeJoin(base, rel) {
   const target = path.resolve(base, "." + path.sep + rel);
   return target === base || target.startsWith(base + path.sep) ? target : null;
 }
 
 // ---------- provider key test ----------
+
 async function testProviderKey(providerId, apiKey, baseUrl) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10_000);
@@ -370,6 +217,7 @@ async function testProviderKey(providerId, apiKey, baseUrl) {
 }
 
 // ---------- starter project ----------
+
 const STARTER_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -390,6 +238,7 @@ const STARTER_HTML = `<!doctype html>
 </body>
 </html>
 `;
+
 const STARTER_CSS = `:root { color-scheme: dark; }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0e14; color: #e6e9ef;
@@ -404,74 +253,14 @@ button { margin-top: 14px; padding: 11px 22px; border: 0; border-radius: 999px; 
 button:hover { filter: brightness(1.08); }
 .out { min-height: 1.5em; color: #e8b33c; }
 `;
+
 const STARTER_JS = `document.getElementById("hello").addEventListener("click", () => {
   document.getElementById("out").textContent = "Hello from your Ronin Code starter project.";
 });
 `;
 
 // ---------- usage store (cost center + router stats) ----------
-const USAGE_PATH = path.join(RONIN_HOME, "usage.json");
-let usageCache = null;
-function loadUsage() {
-  if (usageCache) return usageCache;
-  const u = readJsonFile(USAGE_PATH, {});
-  usageCache = {
-    keys: u.keys && typeof u.keys === "object" ? u.keys : {},
-    rtk: u.rtk && typeof u.rtk === "object" ? u.rtk : { calls: 0, originalChars: 0, compressedChars: 0 },
-    turns: Array.isArray(u.turns) ? u.turns.slice(-300) : [],
-  };
-  return usageCache;
-}
-function saveUsage() {
-  if (!usageCache) return;
-  try { writeJsonFile0600(USAGE_PATH, usageCache); } catch {}
-}
-const keyIdOf = (key) => crypto.createHash("sha256").update(key).digest("hex").slice(0, 10);
-function keyStats(usage, providerId, key) {
-  const s = usage.keys[`${providerId}:${keyIdOf(key)}`];
-  if (!s) return { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, coolingDown: false };
-  return {
-    requests: s.requests || 0,
-    errors: s.errors || 0,
-    inputTokens: s.inputTokens || 0,
-    outputTokens: s.outputTokens || 0,
-    coolingDown: typeof s.cooldownUntil === "number" && s.cooldownUntil > Date.now(),
-  };
-}
-function recordKeyUse(providerId, key, { error = false, inputTokens = 0, outputTokens = 0, cooldownMs = 0 } = {}) {
-  const usage = loadUsage();
-  const id = `${providerId}:${keyIdOf(key)}`;
-  const s = usage.keys[id] || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, cooldownUntil: 0, lastUsedAt: 0 };
-  s.requests += 1;
-  if (error) s.errors += 1;
-  s.inputTokens += inputTokens || 0;
-  s.outputTokens += outputTokens || 0;
-  s.lastUsedAt = Date.now();
-  if (cooldownMs > 0) s.cooldownUntil = Date.now() + cooldownMs;
-  usage.keys[id] = s;
-  saveUsage();
-  return s;
-}
-function recordTurnUsage(rec) {
-  const usage = loadUsage();
-  usage.turns.push(rec);
-  if (usage.turns.length > 300) usage.turns = usage.turns.slice(-300);
-  saveUsage();
-}
-function sessionTotals() {
-  const usage = loadUsage();
-  const t = { turns: usage.turns.length, inputTokens: 0, outputTokens: 0, costUsd: 0 };
-  for (const r of usage.turns) {
-    t.inputTokens += r.inputTokens || 0;
-    t.outputTokens += r.outputTokens || 0;
-    t.costUsd += r.costUsd || 0;
-  }
-  t.costUsd = Math.round(t.costUsd * 1e6) / 1e6;
-  return t;
-}
 
-// ---------- router: multi-key rotation + failover ----------
-/** Pick the next usable key for a provider: round-robin, skipping cooled-down keys. */
 function pickKey(providerId, auth, exclude = new Set()) {
   const keys = keyList(auth[providerId]);
   const usage = loadUsage();
@@ -489,6 +278,7 @@ function pickKey(providerId, auth, exclude = new Set()) {
   return usable[0];
 }
 /** Ordered provider list for a turn: active provider first, then failover order. */
+
 function providerChain(primaryId) {
   const order = [];
   const push = (id) => { if (id && providerById(id) && !order.includes(id)) order.push(id); };
@@ -496,11 +286,14 @@ function providerChain(primaryId) {
   if (config.failover) for (const id of config.failoverOrder) push(id);
   return order;
 }
+
 const isFailoverError = (msg) =>
   /\b(429|500|502|503|504)\b|rate.?limit|quota|overloaded|too many requests|insufficient|capacity/i.test(msg || "");
 
 // ---------- RTK-style tool-output compression ----------
+
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\r/g;
+
 function compressToolText(text) {
   if (typeof text !== "string" || text.length < 800) return { text, saved: 0 };
   const original = text;
@@ -539,6 +332,7 @@ function compressToolText(text) {
 }
 
 // ---------- secret redaction ----------
+
 const SECRET_PATTERNS = [
   /\b(sk|rk)-[A-Za-z0-9_-]{16,}\b/g,                 // OpenAI-style keys
   /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g,                  // Anthropic keys
@@ -549,6 +343,7 @@ const SECRET_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
   /((?:api[_-]?key|secret|password|passwd|token)\s*[:=]\s*)["']?[^\s"']{8,}["']?/gi,
 ];
+
 function redactSecrets(text) {
   if (typeof text !== "string" || !text) return text;
   let out = text;
@@ -557,12 +352,14 @@ function redactSecrets(text) {
   }
   return out;
 }
+
 function collectSecretValues() {
   const vals = new Set();
   const auth = loadAuth();
   for (const v of Object.values(auth)) for (const k of keyList(v)) if (k.length >= 8) vals.add(k);
   return [...vals];
 }
+
 function redactKnownSecrets(text, values) {
   let out = redactSecrets(text);
   for (const v of values || []) out = out.split(v).join("••••");
@@ -570,19 +367,23 @@ function redactKnownSecrets(text, values) {
 }
 
 // ---------- .env protection ----------
+
 function isEnvPath(p, project) {
   if (typeof p !== "string" || !p) return false;
-  const abs = path.resolve(project || currentProject || "/", p.startsWith("/") || /^[a-zA-Z]:/.test(p) ? p : path.join(project || "", p));
+  const abs = path.resolve(project || getProject() || "/", p.startsWith("/") || /^[a-zA-Z]:/.test(p) ? p : path.join(project || "", p));
   const base = path.basename(abs);
   if (base === ".env.example" || base === ".env.sample" || base === ".env.template") return false;
   return base === ".env" || base.startsWith(".env.");
 }
-function envAccessAllowed(project = currentProject) {
+
+function envAccessAllowed(project = getProject()) {
   return project ? config.envAllowedProjects[path.resolve(project)] === true : false;
 }
 
 // ---------- approvals ----------
+
 const pendingApprovals = new Map(); // id -> { resolve, kind, detail }
+
 function requestApproval(kind, detail) {
   const id = crypto.randomUUID();
   broadcast({ type: "approval_request", approvalId: id, kind, detail });
@@ -594,6 +395,7 @@ function requestApproval(kind, detail) {
     }, 10 * 60 * 1000);
   });
 }
+
 function resolveApproval(id, approved) {
   const p = pendingApprovals.get(id);
   if (!p) return false;
@@ -604,8 +406,11 @@ function resolveApproval(id, approved) {
 }
 
 // ---------- turns ----------
+
 let turnRunning = false;
+
 let activitySeq = 0;
+
 const nextActivityId = () => `act-${++activitySeq}`;
 
 function emitActivity(kind, ms) {
@@ -613,6 +418,7 @@ function emitActivity(kind, ms) {
   broadcast({ type: "activity_start", activityId, kind });
   return { activityId, kind, async end() { broadcast({ type: "activity_end", activityId, kind }); } };
 }
+
 async function runActivity(kind, ms) {
   const a = emitActivity(kind, ms);
   await sleep(ms);
@@ -655,13 +461,16 @@ const TOOL_KIND = {
 // ---------- price table (server-side; GUI never prices anything) ----------
 // USD per 1M tokens. `multiplier` scales consumption (subscription-style
 // accounting, mirrored into cost so expensive models weigh more).
+
 const PRICE_TABLE = {
   "claude-sonnet-4-5": { input: 3, output: 15, multiplier: 1 },
   "gpt-5": { input: 1.25, output: 10, multiplier: 1 },
   "gemini-2.5-pro": { input: 1.25, output: 10, multiplier: 1 },
   "openai/gpt-5": { input: 1.25, output: 10, multiplier: 1 },
 };
+
 const DEFAULT_PRICE = { input: 0.5, output: 2, multiplier: 1 };
+
 function priceTurn(modelId, inputTokens, outputTokens, engineCost) {
   if (typeof engineCost === "number" && engineCost > 0) {
     return { costUsd: Math.round(engineCost * 1e6) / 1e6, estimated: false };
@@ -725,6 +534,7 @@ function finalizeTurnUsage({ providerId, modelId, apiKey, usage, promptText, rep
  * approval gates, .env protection, secret redaction and RTK compression.
  * Runs inside the engine process via extensionFactories (see ENGINE.md).
  */
+
 function makeGuardExtension({ project, autoMode, secretValues }) {
   const insideProject = (abs) => {
     const rel = path.relative(path.resolve(project), abs);
@@ -791,6 +601,7 @@ function makeGuardExtension({ project, autoMode, secretValues }) {
 }
 
 /** One live attempt against one provider+key. Throws on engine/provider failure. */
+
 async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, manifest, autoMode, onProgress, state }) {
   // Embedded engine — actual installed SDK API (v1.3.0, see ENGINE.md).
   const engine = await import("@earendil-works/pi-coding-agent");
@@ -959,6 +770,7 @@ async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, ma
 }
 
 /** Attempts list for a turn: primary provider keys (rotated), then failover providers. */
+
 function buildAttempts(auth) {
   const attempts = [];
   for (const providerId of providerChain(config.provider)) {
@@ -1017,7 +829,9 @@ async function runLiveTurn(prompt, project, manifest, { autoMode, onProgress } =
 }
 
 // ---------- plan mode ----------
+
 let pendingPlan = null; // { id, task, steps: [{title, detail}], project }
+
 const previewSteps = () =>
   config.language === "fa"
     ? [
@@ -1041,6 +855,7 @@ function parseJsonBlock(text) {
 }
 
 /** A tools-free engine call that must answer with JSON. Used by plan + idea flows. */
+
 async function runJsonPrompt(promptText, project) {
   const auth = loadAuth();
   const attempts = buildAttempts(auth);
@@ -1129,7 +944,7 @@ async function proposePlan(task, project) {
 }
 
 async function executePlannedTurn(plan) {
-  const project = currentProject;
+  const project = getProject();
   let manifest = null;
   try { manifest = await takeSnapshot(project); } catch {}
   const stepStates = plan.steps.map(() => "pending");
@@ -1170,6 +985,7 @@ async function executePlannedTurn(plan) {
 }
 
 // ---------- idea maturation ----------
+
 async function matureIdea(idea, project) {
   const auth = loadAuth();
   const live = keyList(auth[config.provider]).length > 0;
@@ -1204,8 +1020,9 @@ async function matureIdea(idea, project) {
 }
 
 // ---------- turn dispatch ----------
+
 async function runTurn(prompt, opts = {}) {
-  const project = currentProject;
+  const project = getProject();
   try {
     if (opts.kind === "executePlan" && opts.plan) {
       await executePlannedTurn(opts.plan);
@@ -1243,16 +1060,20 @@ async function runTurn(prompt, opts = {}) {
 }
 
 // ---------- named checkpoints ----------
+
 function checkpointsBase(project) {
   return path.join(SNAPSHOTS_DIR, projectHash(project), "checkpoints");
 }
+
 function checkpointsMetaPath(project) {
   return path.join(SNAPSHOTS_DIR, projectHash(project), "checkpoints.json");
 }
+
 function listCheckpoints(project) {
   const list = readJsonFile(checkpointsMetaPath(project), []);
   return Array.isArray(list) ? list : [];
 }
+
 async function createCheckpoint(project, name) {
   const manifest = await takeSnapshot(project); // refreshes "latest"
   const id = crypto.randomUUID().slice(0, 8);
@@ -1266,6 +1087,7 @@ async function createCheckpoint(project, name) {
   await fsp.writeFile(checkpointsMetaPath(project), JSON.stringify(list.slice(0, 50), null, 2));
   return meta;
 }
+
 async function restoreTree(project, sourceDir, manifest) {
   const keep = new Set(manifest.files.map((f) => f.path));
   const now = await walkProject(project);
@@ -1280,6 +1102,7 @@ async function restoreTree(project, sourceDir, manifest) {
 }
 
 // ---------- unified diff ----------
+
 function unifiedDiff(oldText, newText, relPath) {
   const a = oldText.split("\n");
   const b = newText.split("\n");
@@ -1330,6 +1153,7 @@ function unifiedDiff(oldText, newText, relPath) {
 }
 
 // ---------- minimal ZIP writer (store/deflate, stdlib zlib) ----------
+
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -1339,11 +1163,13 @@ const CRC_TABLE = (() => {
   }
   return table;
 })();
+
 function crc32(buf) {
   let c = 0xffffffff;
   for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
+
 function buildZip(entries) {
   // entries: [{ name, data: Buffer }]
   const chunks = [];
@@ -1389,6 +1215,7 @@ function buildZip(entries) {
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...chunks, ...central, end]);
 }
+
 async function projectZipBuffer(project) {
   const files = await walkProject(project);
   const entries = [];
@@ -1400,6 +1227,7 @@ async function projectZipBuffer(project) {
 }
 
 // ---------- routes ----------
+
 async function handleApi(req, res, url) {
   const route = url.pathname;
 
@@ -1415,13 +1243,13 @@ async function handleApi(req, res, url) {
       provider: config.provider,
       model: currentModel(),
       hasKey,
-      project: currentProject,
+      project: getProject(),
       onboarded: config.onboarded,
       language: config.language,
       autoMode: effectiveAutoMode(),
       planMode: effectivePlanMode(),
       projectMode: projectMode(),
-      envAccess: currentProject ? config.envAllowedProjects[path.resolve(currentProject)] === true : false,
+      envAccess: getProject() ? config.envAllowedProjects[path.resolve(getProject())] === true : false,
       budgetCapUsd: config.budgetCapUsd,
       failover: config.failover,
     });
@@ -1502,8 +1330,8 @@ async function handleApi(req, res, url) {
     }
     if (body.autoMode !== undefined) config.autoMode = body.autoMode === true;
     if (body.planMode !== undefined) config.planMode = body.planMode === true;
-    if (body.projectMode !== undefined && currentProject) {
-      const key = path.resolve(currentProject);
+    if (body.projectMode !== undefined && getProject()) {
+      const key = path.resolve(getProject());
       if (body.projectMode === "auto" || body.projectMode === "plan") config.projectModes[key] = body.projectMode;
       else delete config.projectModes[key];
     }
@@ -1515,8 +1343,8 @@ async function handleApi(req, res, url) {
       config.budgetCapUsd =
         typeof body.budgetCapUsd === "number" && body.budgetCapUsd > 0 ? body.budgetCapUsd : null;
     }
-    if (body.envAccess !== undefined && currentProject) {
-      const key = path.resolve(currentProject);
+    if (body.envAccess !== undefined && getProject()) {
+      const key = path.resolve(getProject());
       if (body.envAccess === true) config.envAllowedProjects[key] = true;
       else delete config.envAllowedProjects[key];
     }
@@ -1540,9 +1368,9 @@ async function handleApi(req, res, url) {
     let st;
     try { st = await fsp.stat(p); } catch { return sendJson(res, 400, { error: "That folder does not exist" }); }
     if (!st.isDirectory()) return sendJson(res, 400, { error: "That path is not a folder" });
-    currentProject = p;
+    setProject(p);
     saveConfig();
-    return sendJson(res, 200, { path: currentProject });
+    return sendJson(res, 200, { path: getProject() });
   }
 
   if (route === "/api/starters" && req.method === "GET") {
@@ -1582,7 +1410,7 @@ async function handleApi(req, res, url) {
         const dest = path.join(dir, name);
         if ((await fsp.stat(src)).isFile() && !fs.existsSync(dest)) await fsp.copyFile(src, dest);
       }
-      currentProject = dir;
+      setProject(dir);
       saveConfig();
       return sendJson(res, 200, { path: dir });
     }
@@ -1593,56 +1421,56 @@ async function handleApi(req, res, url) {
       const fp = path.join(dir, name);
       if (!fs.existsSync(fp)) await fsp.writeFile(fp, content);
     }
-    currentProject = dir;
+    setProject(dir);
     saveConfig();
     return sendJson(res, 200, { path: dir });
   }
 
   if (route === "/api/undo" && req.method === "POST") {
-    if (!currentProject) return sendJson(res, 400, { error: "No project is open, so there is nothing to undo", code: "no_project" });
-    const manifest = await readManifest(currentProject);
-    const latest = path.join(SNAPSHOTS_DIR, projectHash(currentProject), "latest");
+    if (!getProject()) return sendJson(res, 400, { error: "No project is open, so there is nothing to undo", code: "no_project" });
+    const manifest = await readManifest(getProject());
+    const latest = path.join(SNAPSHOTS_DIR, projectHash(getProject()), "latest");
     if (!manifest || !fs.existsSync(latest))
       return sendJson(res, 400, { error: "No snapshot is available for this project yet. Run a turn first, then undo becomes available.", code: "no_snapshot" });
-    await restoreTree(currentProject, latest, manifest);
+    await restoreTree(getProject(), latest, manifest);
     return sendJson(res, 200, { ok: true, files: manifest.files.map((f) => f.path) });
   }
 
   if (route === "/api/checkpoints" && req.method === "GET") {
-    if (!currentProject) return sendJson(res, 200, []);
-    return sendJson(res, 200, listCheckpoints(currentProject));
+    if (!getProject()) return sendJson(res, 200, []);
+    return sendJson(res, 200, listCheckpoints(getProject()));
   }
 
   if (route === "/api/checkpoints" && req.method === "POST") {
-    if (!currentProject) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
+    if (!getProject()) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
     const body = await readBody(req).catch(() => ({}));
-    const meta = await createCheckpoint(currentProject, typeof body.name === "string" ? body.name.slice(0, 80) : "");
+    const meta = await createCheckpoint(getProject(), typeof body.name === "string" ? body.name.slice(0, 80) : "");
     return sendJson(res, 200, meta);
   }
 
   if (route === "/api/checkpoints/restore" && req.method === "POST") {
-    if (!currentProject) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
+    if (!getProject()) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
     const body = await readBody(req).catch(() => ({}));
-    const meta = listCheckpoints(currentProject).find((c) => c.id === body.id);
+    const meta = listCheckpoints(getProject()).find((c) => c.id === body.id);
     if (!meta) return sendJson(res, 404, { error: "Checkpoint not found", code: "not_found" });
-    const dir = path.join(checkpointsBase(currentProject), meta.id);
+    const dir = path.join(checkpointsBase(getProject()), meta.id);
     // Rebuild a manifest from the checkpoint's own files.
-    const savedProject = currentProject;
+    const savedProject = getProject();
     const files = await walkProject(dir);
     const manifest = { project: savedProject, timestamp: meta.ts, files: files.map((f) => ({ ...f })) };
-    await restoreTree(currentProject, dir, manifest);
+    await restoreTree(getProject(), dir, manifest);
     return sendJson(res, 200, { ok: true, name: meta.name });
   }
 
   if (route === "/api/diff" && req.method === "GET") {
-    if (!lastTurnDiff || lastTurnDiff.project !== currentProject || !lastTurnDiff.manifest) {
+    if (!lastTurnDiff || lastTurnDiff.project !== getProject() || !lastTurnDiff.manifest) {
       return sendJson(res, 200, { files: [] });
     }
-    const latest = path.join(SNAPSHOTS_DIR, projectHash(currentProject), "latest");
+    const latest = path.join(SNAPSHOTS_DIR, projectHash(getProject()), "latest");
     const out = [];
     for (const c of lastTurnDiff.changes.slice(0, 50)) {
       const beforePath = path.join(latest, c.path);
-      const afterPath = path.join(currentProject, c.path);
+      const afterPath = path.join(getProject(), c.path);
       const before = fs.existsSync(beforePath) ? await fsp.readFile(beforePath, "utf8").catch(() => "") : "";
       const after = fs.existsSync(afterPath) ? await fsp.readFile(afterPath, "utf8").catch(() => "") : "";
       const binary = before.includes("\0") || after.includes("\0");
@@ -1704,7 +1532,7 @@ async function handleApi(req, res, url) {
     const body = await readBody(req).catch(() => null);
     if (!body || typeof body.idea !== "string" || !body.idea.trim())
       return sendJson(res, 400, { error: "Describe your idea in a sentence first", code: "prompt_required" });
-    const result = await matureIdea(body.idea.trim(), currentProject);
+    const result = await matureIdea(body.idea.trim(), getProject());
     return sendJson(res, 200, result);
   }
 
@@ -1720,7 +1548,7 @@ async function handleApi(req, res, url) {
       body.idea.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "idea";
     const dir = path.join(base, `${slug}-${crypto.randomUUID().slice(0, 6)}`);
     await fsp.mkdir(dir, { recursive: true });
-    currentProject = dir;
+    setProject(dir);
     saveConfig();
     const m = body.mature || {};
     const task =
@@ -1741,9 +1569,9 @@ async function handleApi(req, res, url) {
   }
 
   if (route === "/api/projects/export" && req.method === "GET") {
-    if (!currentProject) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
-    const zip = await projectZipBuffer(currentProject);
-    const name = `${path.basename(currentProject)}.zip`;
+    if (!getProject()) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
+    const zip = await projectZipBuffer(getProject());
+    const name = `${path.basename(getProject())}.zip`;
     res.writeHead(200, {
       "Content-Type": "application/zip",
       "Content-Length": zip.length,
@@ -1753,15 +1581,15 @@ async function handleApi(req, res, url) {
   }
 
   if (route === "/api/projects/export-dist" && req.method === "POST") {
-    if (!currentProject) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
-    const dist = path.join(currentProject, "dist");
-    const files = await walkProject(currentProject);
+    if (!getProject()) return sendJson(res, 400, { error: "No project is open", code: "no_project" });
+    const dist = path.join(getProject(), "dist");
+    const files = await walkProject(getProject());
     let copied = 0;
     for (const f of files) {
       if (f.path.startsWith("dist/") || f.path.startsWith("dist\\")) continue;
       const dest = path.join(dist, f.path);
       await fsp.mkdir(path.dirname(dest), { recursive: true });
-      await fsp.copyFile(path.join(currentProject, f.path), dest);
+      await fsp.copyFile(path.join(getProject(), f.path), dest);
       copied++;
     }
     return sendJson(res, 200, { ok: true, path: dist, files: copied });
@@ -1774,7 +1602,7 @@ async function handleApi(req, res, url) {
       Connection: "keep-alive",
     });
     sseClients.add(res);
-    const hello = { id: ++eventSeq, type: "hello", apiVersion: 1 };
+    const hello = { id: bumpEventSeq(), type: "hello", apiVersion: 1 };
     res.write(`id: ${hello.id}\ndata: ${JSON.stringify(hello)}\n\n`);
     const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch {} }, 25_000);
     req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
@@ -1785,7 +1613,7 @@ async function handleApi(req, res, url) {
     const body = await readBody(req).catch(() => null);
     if (!body || typeof body.prompt !== "string" || !body.prompt.trim())
       return sendJson(res, 400, { error: "A prompt is required", code: "prompt_required" });
-    if (!currentProject) return sendJson(res, 400, { error: "No project is open. Open or create a project first.", code: "no_project" });
+    if (!getProject()) return sendJson(res, 400, { error: "No project is open. Open or create a project first.", code: "no_project" });
     if (turnRunning) return sendJson(res, 409, { error: "A turn is already running", code: "turn_running" });
     if (config.budgetCapUsd && sessionTotals().costUsd >= config.budgetCapUsd)
       return sendJson(res, 402, { error: "Your budget cap has been reached. Raise it in Settings to keep going.", code: "budget_exceeded" });
@@ -1828,7 +1656,7 @@ async function serveStatic(req, res, url) {
 }
 
 async function servePreview(req, res, url) {
-  if (!currentProject) {
+  if (!getProject()) {
     // Dark, on-brand placeholder — never a stark white pane.
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ronin Code</title><style>
       html,body{height:100%;margin:0}body{background:#0b0c10;color:#626a77;display:grid;place-items:center;
@@ -1842,7 +1670,7 @@ async function servePreview(req, res, url) {
   }
   let rel = decodeURIComponent(url.pathname.slice("/preview".length)) || "/";
   if (rel === "/" || rel.endsWith("/")) rel += "index.html";
-  const target = safeJoin(path.resolve(currentProject), rel);
+  const target = safeJoin(path.resolve(getProject()), rel);
   if (!target || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
     if (rel.endsWith("index.html")) {
       // Project is open but has no page yet — keep the branded placeholder
