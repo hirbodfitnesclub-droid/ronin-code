@@ -1,81 +1,76 @@
 import { useState } from 'react';
-import { api, type Provider, type Status } from '../../lib/api';
+import { api, type Status, type Theme } from '../../lib/api';
+import { modelById } from '../../lib/models';
 import { useLang, type Lang } from '../../lib/i18n';
 import Logo from '../../components/ui/Logo';
+import ThemeSegmented from '../../components/ui/ThemeSegmented';
+import ModelMultiSelect from '../settings/ModelMultiSelect';
 
 interface Props {
-  providers: Provider[];
   status: Status | null;
   onLanguage: (lang: Lang) => void;
   onDone: () => void;
-  onCreateStarter: () => void;
-  onOpenProject: () => void;
 }
 
-/** First-run flow: welcome + language → provider key (skippable) → ready. */
-export default function Onboarding({ providers, status, onLanguage, onDone, onCreateStarter, onOpenProject }: Props) {
+/* Sensible starter set spanning families and price points. */
+const DEFAULT_MODELS = [
+  'deepseek-v4.1-flash',
+  'mimo-v2.6-flash',
+  'gpt-6-luna',
+  'gpt-5.6-terra',
+  'claude-sonnet-5',
+  'gemini-3.8-flash',
+  'grok-4.7',
+  'qwen3.8-flash',
+];
+
+/** First-run flow (post-login): step 1 pick models, step 2 essentials
+    (theme + language). BYOK keys are NOT collected here — they live in
+    Settings. Finish persists everything in one saveSettings call. */
+export default function Onboarding({ status, onLanguage, onDone }: Props) {
   const { t } = useLang();
   const [step, setStep] = useState(0);
   const [lang, setLang] = useState<Lang>(status?.language ?? 'en');
-  const [provider, setProvider] = useState(status?.provider ?? 'anthropic');
-  const [apiKey, setApiKey] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [model, setModel] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [selected, setSelected] = useState<string[]>(() => {
+    const fromStatus = (status?.enabledModels ?? []).filter((id_) => modelById(id_));
+    return fromStatus.length > 0 ? fromStatus : DEFAULT_MODELS.filter((id_) => modelById(id_));
+  });
+  const [theme, setTheme] = useState<Theme>(status?.theme ?? 'dark');
   const [saving, setSaving] = useState(false);
-
-  const selected = providers.find((p) => p.id === provider);
 
   const pickLang = (l: Lang) => {
     setLang(l);
     onLanguage(l);
   };
 
-  const finish = async (withKey: boolean) => {
+  const pickTheme = (next: Theme) => {
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+  };
+
+  const finish = async () => {
     setSaving(true);
     try {
       await api.saveSettings({
+        enabledModels: selected,
+        activeModelId: selected[0],
+        theme,
         language: lang,
         onboarded: true,
-        provider,
-        ...(withKey && apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-        ...(withKey && model.trim() ? { model: model.trim() } : {}),
-        ...(withKey && provider === 'custom' ? { baseUrl: baseUrl.trim() } : {}),
       });
-      setStep(2);
     } catch {
-      /* stay on the step; the main UI surfaces errors after onboarding */
-      setStep(2);
+      /* the main UI surfaces errors after onboarding; do not trap the user here */
     } finally {
       setSaving(false);
-    }
-  };
-
-  const test = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      if (apiKey.trim()) {
-        await api.saveSettings({
-          provider,
-          apiKey: apiKey.trim(),
-          ...(provider === 'custom' ? { baseUrl: baseUrl.trim() } : {}),
-        });
-      }
-      setTestResult(await api.testSettings(provider, provider === 'custom' ? baseUrl.trim() : undefined));
-    } catch (err) {
-      setTestResult({ ok: false, message: err instanceof Error ? err.message : t('settings.testFailed') });
-    } finally {
-      setTesting(false);
+      onDone();
     }
   };
 
   return (
     <div className="onboarding" role="dialog" aria-modal="true">
-      <div className="onboarding-card">
+      <div className="onboarding-card onboarding-card--wide">
         <div className="onboarding-dots" aria-hidden="true">
-          {[0, 1, 2].map((i) => (
+          {[0, 1].map((i) => (
             <span
               key={i}
               className={`onboarding-dot ${i === step ? 'onboarding-dot--active' : ''} ${i < step ? 'onboarding-dot--done' : ''}`}
@@ -88,8 +83,33 @@ export default function Onboarding({ providers, status, onLanguage, onDone, onCr
             <div className="onboarding-logo">
               <Logo />
             </div>
-            <h1>{t('onboarding.welcomeTitle')}</h1>
-            <p className="onboarding-sub">{t('onboarding.welcomeSub')}</p>
+            <h1>{t('onboarding.modelsTitle')}</h1>
+            <p className="onboarding-sub">{t('onboarding.modelsSub')}</p>
+            <ModelMultiSelect value={selected} onChange={setSelected} />
+            <p className="field-hint onboarding-note">{t('settings.models.changeNote')}</p>
+            <div className="onboarding-actions">
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => setStep(1)}
+                disabled={selected.length === 0}
+              >
+                {t('onboarding.continue')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="onboarding-step">
+            <h1>{t('onboarding.essentialsTitle')}</h1>
+            <p className="onboarding-sub">{t('onboarding.essentialsSub')}</p>
+
+            <p className="field-label onboarding-lang-label">{t('onboarding.theme')}</p>
+            <div className="onboarding-theme-row">
+              <ThemeSegmented value={theme} onChange={pickTheme} labelKey="onboarding.theme" />
+            </div>
+
             <p className="field-label onboarding-lang-label">{t('onboarding.chooseLang')}</p>
             <div className="lang-cards">
               <button
@@ -110,134 +130,15 @@ export default function Onboarding({ providers, status, onLanguage, onDone, onCr
                 <span className="lang-card-sample">یه چیز زیبا بساز</span>
               </button>
             </div>
-            <div className="onboarding-actions">
-              <button type="button" className="btn btn--primary" onClick={() => setStep(1)}>
-                {t('onboarding.continue')}
-              </button>
-            </div>
-          </div>
-        )}
 
-        {step === 1 && (
-          <div className="onboarding-step">
-            <h1>{t('onboarding.providerTitle')}</h1>
-            <p className="onboarding-sub">{t('onboarding.providerSub')}</p>
-            <label className="field">
-              <span className="field-label">{t('settings.provider')}</span>
-              <select
-                value={provider}
-                onChange={(e) => {
-                  setProvider(e.target.value);
-                  const p = providers.find((x) => x.id === e.target.value);
-                  setModel(p?.defaultModel ?? '');
-                  setBaseUrl(p?.baseUrl ?? '');
-                  setTestResult(null);
-                }}
-              >
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {provider === 'custom' && (
-              <label className="field">
-                <span className="field-label">{t('settings.endpointUrl')}</span>
-                <input
-                  type="url"
-                  dir="ltr"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://your-endpoint.example/v1"
-                />
-              </label>
-            )}
-            <label className="field">
-              <span className="field-label">{t('settings.apiKey')}</span>
-              <input
-                type="password"
-                dir="ltr"
-                autoComplete="off"
-                spellCheck={false}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={
-                  selected?.hasKey
-                    ? t('settings.keepKey', { masked: selected.maskedKey || '••••' })
-                    : t('settings.apiKeyPlaceholder')
-                }
-              />
-              <span className="field-hint">{t('settings.keysHint')}</span>
-            </label>
-            <label className="field">
-              <span className="field-label">{t('settings.model')}</span>
-              <input
-                type="text"
-                dir="ltr"
-                autoComplete="off"
-                spellCheck={false}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder={selected?.defaultModel ?? t('settings.modelPlaceholder')}
-              />
-            </label>
-            {testResult && (
-              <p className={`test-result ${testResult.ok ? 'test-result--ok' : 'test-result--bad'}`}>
-                {testResult.message}
-              </p>
-            )}
+            <p className="field-hint onboarding-note">{t('onboarding.keysNote')}</p>
+
             <div className="onboarding-actions onboarding-actions--split">
               <button type="button" className="btn btn--ghost" onClick={() => setStep(0)}>
                 {t('onboarding.back')}
               </button>
-              <span className="onboarding-actions-right">
-                <button type="button" className="btn btn--ghost" onClick={test} disabled={testing || saving}>
-                  {testing ? t('settings.testing') : t('settings.test')}
-                </button>
-                <button type="button" className="btn btn--primary" onClick={() => void finish(true)} disabled={saving}>
-                  {t('onboarding.continue')}
-                </button>
-              </span>
-            </div>
-            <button type="button" className="link-btn" onClick={() => void finish(false)} disabled={saving}>
-              {t('onboarding.skip')}
-            </button>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div className="onboarding-step">
-            <div className="onboarding-logo">
-              <Logo />
-            </div>
-            <h1>{t('onboarding.doneTitle')}</h1>
-            <p className="onboarding-sub">{t('onboarding.doneSub')}</p>
-            <div className="onboarding-actions onboarding-actions--stack">
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => {
-                  onCreateStarter();
-                  onDone();
-                }}
-              >
-                {t('app.createStarter')}
-              </button>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={() => {
-                  onOpenProject();
-                  onDone();
-                }}
-              >
-                {t('app.openProject')}
-              </button>
-              <button type="button" className="link-btn" onClick={onDone}>
-                {t('onboarding.startBuilding')}
+              <button type="button" className="btn btn--primary" onClick={() => void finish()} disabled={saving}>
+                {t('onboarding.finish')}
               </button>
             </div>
           </div>

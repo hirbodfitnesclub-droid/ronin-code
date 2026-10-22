@@ -1,9 +1,11 @@
-import type { Mode } from '../../lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { api, type AuthState, type Mode } from '../../lib/api';
+import { formatTokens } from '../../lib/format';
 import { useLang } from '../../lib/i18n';
 import Logo from '../../components/ui/Logo';
 
 /* Ronin Code — app header: brand, project actions, session cost,
-   Auto/Plan toggles, mode badge, settings entry. */
+   Auto/Plan toggles, mode badge, account chip, settings entry. */
 
 interface Props {
   project: string;
@@ -13,6 +15,9 @@ interface Props {
   planMode: boolean;
   mode: Mode;
   model?: string;
+  auth?: AuthState;
+  panelUrl?: string;
+  onStatusRefresh: () => void;
   onOpenProject: () => void;
   onOpenStarters: () => void;
   onOpenIdea: () => void;
@@ -21,6 +26,108 @@ interface Props {
   onToggleAuto: () => void;
   onTogglePlan: () => void;
   onOpenSettings: () => void;
+}
+
+function AccountChip({ auth, panelUrl, onStatusRefresh }: { auth: AuthState; panelUrl: string; onStatusRefresh: () => void }) {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open ]);
+
+  const user = auth.user;
+  const sub = auth.subscription;
+  const displayName = user?.name || user?.phone || '';
+  const initial = (displayName.trim().charAt(0) || 'R').toUpperCase();
+  const balance = sub ? formatTokens(sub.spendableTokens ?? sub.balanceTokens) : null;
+
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      await api.refreshStatus();
+    } catch {
+      /* the status refresh below still re-reads the host state */
+    } finally {
+      setBusy(false);
+      setOpen(false);
+      onStatusRefresh();
+    }
+  };
+
+  const logout = async () => {
+    setBusy(true);
+    try {
+      await api.logout();
+    } catch {
+      /* still re-read status — the gate decides what shows next */
+    } finally {
+      setBusy(false);
+      setOpen(false);
+      onStatusRefresh();
+    }
+  };
+
+  return (
+    <div className="account-chip-wrap" ref={rootRef}>
+      <button
+        type="button"
+        className="account-chip"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <span className="account-avatar" aria-hidden="true">
+          {initial}
+          {sub?.stale && <span className="account-stale-dot" />}
+        </span>
+        <span className="account-chip-text">
+          <span className="account-name">{displayName}</span>
+          {balance !== null && (
+            <span className="account-balance" dir="ltr">
+              {balance} {t('account.tokens')}
+            </span>
+          )}
+        </span>
+      </button>
+      {open && (
+        <div className="account-menu" role="menu">
+          <div className="account-menu-head">
+            <span className="account-name">{displayName}</span>
+            {balance !== null && (
+              <span className="account-menu-balance" dir="ltr">
+                {t('account.balance')}: {balance}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className="account-menu-item"
+            role="menuitem"
+            onClick={() => {
+              if (panelUrl) window.open(panelUrl, '_blank', 'noopener');
+              setOpen(false);
+            }}
+          >
+            {t('account.openPanel')}
+          </button>
+          <button type="button" className="account-menu-item" role="menuitem" onClick={() => void refresh()} disabled={busy}>
+            {t('account.refreshBalance')}
+          </button>
+          <button type="button" className="account-menu-item" role="menuitem" onClick={() => void logout()} disabled={busy}>
+            {t('account.logout')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Header(p: Props) {
@@ -107,6 +214,9 @@ export default function Header(p: Props) {
         <button type="button" className="btn btn--ghost btn--sm" onClick={p.onOpenSettings}>
           {t('app.settings')}
         </button>
+        {p.auth?.loggedIn && (
+          <AccountChip auth={p.auth} panelUrl={p.panelUrl ?? ''} onStatusRefresh={p.onStatusRefresh} />
+        )}
       </div>
     </header>
   );

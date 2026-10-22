@@ -10,8 +10,8 @@
 .toggle-pill:hover { color: var(--text-dim); }
 .toggle-pill--on { color: var(--amber); background: rgba(232, 161, 60, 0.1); border-color: rgba(232, 161, 60, 0.4); }
 .toggle-pill--on .toggle-dot { opacity: 1; box-shadow: 0 0 8px var(--amber); animation: dotPulse 2.4s ease-in-out infinite; }
-.toggle-pill--plan.toggle-pill--on { color: #b7a6ff; background: rgba(139, 124, 255, 0.12); border-color: rgba(139, 124, 255, 0.45); }
-.toggle-pill--plan.toggle-pill--on .toggle-dot { box-shadow: 0 0 8px #8b7cff; }
+.toggle-pill--plan.toggle-pill--on { color: var(--violet-text); background: rgba(139, 124, 255, 0.12); border-color: rgba(139, 124, 255, 0.45); }
+.toggle-pill--plan.toggle-pill--on .toggle-dot { box-shadow: 0 0 8px var(--violet); }
 
 .cost-chip {
   font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint);

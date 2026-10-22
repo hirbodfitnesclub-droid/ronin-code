@@ -1,9 +1,9 @@
 /* ---------------- chat ---------------- */
 
 .chat-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-inline-end: 1px solid var(--border); background: rgba(255, 255, 255, 0.008); }
-.chat-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }
+.chat-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .chat-scroll::-webkit-scrollbar { width: 8px; }
-.chat-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 8px; }
+.chat-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 8px; }
 
 .messages { display: flex; flex-direction: column; gap: 14px; padding: 22px 20px 12px; max-width: 720px; margin: 0 auto; width: 100%; }
 
@@ -22,12 +22,12 @@
 .msg-bubble code {
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
   font-size: 0.86em; padding: 1px 5px; border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--bg-hover); border: 1px solid var(--border);
 }
 .msg-bubble strong { font-weight: 650; }
 
 .msg--user .msg-bubble {
-  background: linear-gradient(180deg, #232833, #1d212b);
+  background: linear-gradient(180deg, var(--bubble-from), var(--bubble-to));
   border: 1px solid var(--border-strong);
   border-bottom-right-radius: 6px;
 }
@@ -35,5 +35,5 @@
   background: transparent; border: none; padding-inline: 2px; max-width: 100%; color: var(--text);
 }
 .msg--error .msg-bubble {
-  background: rgba(229, 72, 77, 0.09); border: 1px solid rgba(229, 72, 77, 0.32); color: #ffb3b6;
+  background: rgba(229, 72, 77, 0.09); border: 1px solid rgba(229, 72, 77, 0.32); color: var(--error-text);
 }

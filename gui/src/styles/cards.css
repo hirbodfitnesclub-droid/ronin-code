@@ -19,20 +19,20 @@
   box-shadow: 0 0 10px var(--amber); animation: dotPulse 1.6s ease-in-out infinite;
 }
 .plan-spark {
-  width: 9px; height: 9px; border-radius: 2px; background: #8b7cff; flex: none;
+  width: 9px; height: 9px; border-radius: 2px; background: var(--violet); flex: none;
   box-shadow: 0 0 10px rgba(139, 124, 255, 0.8); transform: rotate(45deg);
 }
 .approval-command {
   font-family: var(--font-mono); font-size: 12.5px; direction: ltr; text-align: left;
   background: rgba(0, 0, 0, 0.35); border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 10px 12px; margin: 0 0 8px;
-  white-space: pre-wrap; word-break: break-all; color: #ffd9a0;
+  white-space: pre-wrap; word-break: break-all; color: var(--amber-text);
 }
 .approval-path { font-family: var(--font-mono); font-size: 12.5px; direction: ltr; text-align: left; color: var(--text-dim); margin: 0 0 8px; word-break: break-all; }
 .approval-hint { color: var(--text-faint); font-size: 12px; margin: 10px 0 0; }
 .approval-actions, .plan-actions { display: flex; gap: 10px; margin-top: 12px; }
 .btn--danger-ghost { border-color: var(--border); background: rgba(255, 255, 255, 0.02); color: var(--text-dim); }
-.btn--danger-ghost:hover:not(:disabled) { background: rgba(229, 72, 77, 0.12); color: #ffb3b6; }
+.btn--danger-ghost:hover:not(:disabled) { background: rgba(229, 72, 77, 0.12); color: var(--error-text); }
 
 .plan-task { color: var(--text-dim); margin: 0 0 12px; }
 .plan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
@@ -43,7 +43,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 10.5px; color: var(--text-faint); font-weight: 700;
 }
-.plan-step-item--active .plan-step-node { border-color: #8b7cff; color: #cfc4ff; box-shadow: 0 0 10px rgba(139, 124, 255, 0.5); animation: dotPulse 1.8s ease-in-out infinite; }
+.plan-step-item--active .plan-step-node { border-color: var(--violet); color: var(--violet-text); box-shadow: 0 0 10px rgba(139, 124, 255, 0.5); animation: dotPulse 1.8s ease-in-out infinite; }
 .plan-step-item--done .plan-step-node { border-color: var(--green); background: rgba(70, 192, 122, 0.18); color: var(--green); }
 .plan-step-item--done .plan-step-node::after { content: '✓'; font-size: 11px; }
 .plan-step-item--done .plan-step-num { display: none; }

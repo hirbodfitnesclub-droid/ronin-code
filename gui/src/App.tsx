@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { type Starter } from './lib/api';
 import { LanguageProvider } from './lib/i18n';
 import { useSession } from './hooks/useSession';
@@ -13,6 +13,7 @@ import IdeaPanel from './features/idea';
 import PublishPanel from './features/publish';
 import CheckpointsPanel from './features/checkpoints';
 import Onboarding from './features/onboarding';
+import LoginScreen from './features/auth';
 
 /* Ronin Code — app shell (composition root). Session state lives in
    hooks/useSession, the chat state machine in features/chat/useChat;
@@ -62,16 +63,27 @@ export default function App() {
       refreshMeta,
       invalidatePreview,
       onSessionCost: session.setSessionCost,
+      enabledModels: status?.enabledModels ?? [],
+      activeModelId: status?.activeModelId ?? null,
+      onLoginRequired: () => {
+        void refreshMeta();
+      },
     }),
-    [t, translateError, refreshMeta, invalidatePreview, session.setSessionCost],
+    [t, translateError, refreshMeta, invalidatePreview, session.setSessionCost, status?.enabledModels, status?.activeModelId],
   );
   const chat = useChat(chatOpts);
+
+  /* Apply the account theme (default dark) to the document root. */
+  useEffect(() => {
+    document.documentElement.dataset.theme = status?.theme ?? 'dark';
+  }, [status?.theme]);
 
   /* ---------------- derived ---------------- */
   const mode = status?.mode ?? 'preview';
   const project = status?.project ?? '';
   const projectName = project.split(/[\\/]/).filter(Boolean).pop() ?? '';
-  const showOnboarding = Boolean(status) && !status?.onboarded && !onboardingDismissed;
+  const needsLogin = Boolean(status?.auth) && !status?.auth?.loggedIn;
+  const showOnboarding = Boolean(status) && !needsLogin && !status?.onboarded && !onboardingDismissed;
 
   /* ---------------- cross-feature actions ---------------- */
   const openStarters = async () => {
@@ -86,6 +98,20 @@ export default function App() {
     void refreshMeta();
   };
 
+  if (needsLogin) {
+    return (
+      <ErrorBoundary>
+        <LanguageProvider lang={lang}>
+          <LoginScreen
+            onLoggedIn={() => {
+              void refreshMeta();
+            }}
+          />
+        </LanguageProvider>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <LanguageProvider lang={lang}>
@@ -98,6 +124,9 @@ export default function App() {
             planMode={Boolean(status?.planMode)}
             mode={mode}
             model={status?.model}
+            auth={status?.auth}
+            panelUrl={status?.panelUrl}
+            onStatusRefresh={() => void refreshMeta()}
             onOpenProject={() => void openProject()}
             onOpenStarters={openStarters}
             onOpenIdea={() => setIdeaOpen(true)}
@@ -118,7 +147,14 @@ export default function App() {
           )}
 
           <main className={`main ${previewOpen ? '' : 'main--chat-only'}`}>
-            <ChatPanel chat={chat} mode={mode} onOpenStarters={openStarters} onOpenProject={() => void openProject()} />
+            <ChatPanel
+              chat={chat}
+              mode={mode}
+              enabledModels={status?.enabledModels ?? []}
+              panelUrl={status?.panelUrl ?? ''}
+              onOpenStarters={openStarters}
+              onOpenProject={() => void openProject()}
+            />
             <PreviewPanel
               open={previewOpen}
               project={project}
@@ -160,15 +196,12 @@ export default function App() {
 
           {showOnboarding && (
             <Onboarding
-              providers={providers}
               status={status}
               onLanguage={setLangOverride}
               onDone={() => {
                 setOnboardingDismissed(true);
                 void refreshMeta();
               }}
-              onCreateStarter={() => void createStarter()}
-              onOpenProject={() => void openProject()}
             />
           )}
         </div>

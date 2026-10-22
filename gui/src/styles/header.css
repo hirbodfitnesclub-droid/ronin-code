@@ -4,7 +4,7 @@
   display: flex; align-items: center; gap: 18px;
   padding: 0 16px; height: 54px; flex: none;
   border-bottom: 1px solid var(--border);
-  background: rgba(13, 14, 18, 0.82);
+  background: var(--header-bg);
   backdrop-filter: blur(12px);
   z-index: 5;
 }

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { api, type Provider, type Status } from '../../lib/api';
+import { api, type Provider, type Status, type Theme } from '../../lib/api';
 import RouterSection from './RouterSection';
+import ModelMultiSelect from './ModelMultiSelect';
+import ThemeSegmented from '../../components/ui/ThemeSegmented';
 import { useLang, type Lang } from '../../lib/i18n';
 
 interface Props {
@@ -24,6 +26,8 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
 
   // v1 sections
   const [language, setLanguage] = useState<Lang>('en');
+  const [theme, setTheme] = useState<Theme>('dark');
+  const [enabledModels, setEnabledModels] = useState<string[]>([]);
   const [extraKeys, setExtraKeys] = useState<string[]>(['']);
   const [failoverOn, setFailoverOn] = useState(true);
   const [failoverOrder, setFailoverOrder] = useState<string[]>([]);
@@ -49,6 +53,8 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
     setTestResult(null);
     setSaveError('');
     setLanguage(status?.language ?? 'en');
+    setTheme(status?.theme ?? 'dark');
+    setEnabledModels(status?.enabledModels ?? []);
     setFailoverOn(status?.failover ?? true);
     setEnvAccess(status?.envAccess ?? false);
     setProjectMode(status?.projectMode ?? '');
@@ -81,6 +87,8 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
         ...(model.trim() ? { model: model.trim() } : {}),
         ...(provider === 'custom' ? { baseUrl: baseUrl.trim() } : {}),
         language,
+        theme,
+        enabledModels,
         failover: failoverOn,
         failoverOrder,
         envAccess,
@@ -166,6 +174,17 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
           <span className="field-hint">{t('settings.languageHint')}</span>
         </label>
 
+        <div className="field">
+          <span className="field-label">{t('settings.theme')}</span>
+          <ThemeSegmented
+            value={theme}
+            onChange={(next) => {
+              setTheme(next);
+              document.documentElement.dataset.theme = next;
+            }}
+          />
+        </div>
+
         <label className="field">
           <span className="field-label">{t('settings.provider')}</span>
           <select value={provider} onChange={(e) => pickProvider(e.target.value)}>
@@ -225,6 +244,12 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
           />
           <span className="field-hint">{t('settings.modelHint')}</span>
         </label>
+
+        <div className="settings-section">
+          <h3>{t('settings.models.title')}</h3>
+          <span className="field-hint">{t('settings.models.hint')}</span>
+          <ModelMultiSelect value={enabledModels} onChange={setEnabledModels} />
+        </div>
 
         <RouterSection
           keys={selected?.keys ?? []}

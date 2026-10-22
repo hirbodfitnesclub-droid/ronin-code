@@ -9,7 +9,7 @@
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal {
   width: min(440px, 100%); border-radius: 20px; padding: 22px;
-  background: linear-gradient(180deg, #171a21, #12141a);
+  background: linear-gradient(180deg, var(--modal-from), var(--modal-to));
   border: 1px solid var(--border-strong);
   box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.85);
   animation: modalIn 0.24s cubic-bezier(0.22, 0.9, 0.3, 1) both;
@@ -30,7 +30,7 @@
 .field select option { background: var(--bg-raised); }
 
 .test-result { border-radius: var(--radius-sm); padding: 9px 12px; font-size: 13px; margin: 4px 0 12px; }
-.test-result--ok { color: #9fe3bb; background: rgba(70, 192, 122, 0.1); border: 1px solid rgba(70, 192, 122, 0.32); }
-.test-result--bad { color: #ffb3b6; background: rgba(229, 72, 77, 0.1); border: 1px solid rgba(229, 72, 77, 0.32); }
+.test-result--ok { color: var(--ok-text); background: rgba(70, 192, 122, 0.1); border: 1px solid rgba(70, 192, 122, 0.32); }
+.test-result--bad { color: var(--error-text); background: rgba(229, 72, 77, 0.1); border: 1px solid rgba(229, 72, 77, 0.32); }
 
 .modal-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; }

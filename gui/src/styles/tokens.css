@@ -21,9 +21,53 @@
   --green: #46c07a;
   --amber: #e8a13c;
   --cyan: #56c8d8;
+  /* themeable surfaces/text that used to be hard-coded dark values */
+  --header-bg: rgba(13, 14, 18, 0.82);
+  --scrollbar: rgba(255, 255, 255, 0.14);
+  --error-text: #ffb3b6;
+  --ok-text: #9fe3bb;
+  --amber-text: #ffd9a0;
+  --violet: #8b7cff;
+  --violet-text: #cfc4ff;
+  --hero-from: #ffffff;
+  --hero-to: #c6cad3;
+  --switch-off: rgba(255, 255, 255, 0.12);
+  --modal-from: #171a21;
+  --modal-to: #12141a;
+  --bubble-from: #232833;
+  --bubble-to: #1d212b;
   --radius: 16px;
   --radius-sm: 10px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto,
     'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Light theme — same crimson accent family; green/amber/cyan unchanged. */
+[data-theme='light'] {
+  --bg: #f6f7f9;
+  --bg-panel: #ffffff;
+  --bg-raised: #eef0f3;
+  --bg-hover: #e6e9ee;
+  --border: rgba(15, 18, 25, 0.08);
+  --border-strong: rgba(15, 18, 25, 0.14);
+  --text: #171a21;
+  --text-dim: #5b6472;
+  --text-faint: #8a93a1;
+  --accent-soft: rgba(229, 72, 77, 0.1);
+  --accent-glow: rgba(229, 72, 77, 0.3);
+  --header-bg: rgba(255, 255, 255, 0.85);
+  --scrollbar: rgba(15, 18, 25, 0.2);
+  --error-text: #b3261e;
+  --ok-text: #1c7a43;
+  --amber-text: #8a5a12;
+  --violet: #6d5bd0;
+  --violet-text: #5a48c2;
+  --hero-from: #171a21;
+  --hero-to: #5b6472;
+  --switch-off: rgba(15, 18, 25, 0.18);
+  --modal-from: #ffffff;
+  --modal-to: #f2f3f6;
+  --bubble-from: #ffffff;
+  --bubble-to: #eef0f3;
 }

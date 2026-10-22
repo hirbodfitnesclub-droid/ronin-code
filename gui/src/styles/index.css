@@ -10,6 +10,7 @@
 @import './chat.css';
 @import './empty-state.css';
 @import './composer.css';
+@import './picker.css';
 @import './preview.css';
 @import './changes.css';
 @import './activity.css';
@@ -24,4 +25,6 @@
 @import './panels.css';
 @import './starters.css';
 @import './settings-sections.css';
+@import './models.css';
+@import './auth.css';
 @import './error-boundary.css';
