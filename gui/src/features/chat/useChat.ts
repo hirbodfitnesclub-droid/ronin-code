@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, openStream, type ActivityKind, type ChangedFile, type StreamEvent } from '../../lib/api';
+import { defaultEffort, hasFast, modelById, pickerEfforts } from '../../lib/models';
 import type { StringKey } from '../../lib/i18n';
 import type { TimelineItem } from './types';
 
@@ -17,13 +18,48 @@ export interface ChatOptions {
   refreshMeta: () => Promise<void>;
   invalidatePreview: () => void;
   onSessionCost: (sessionTotalUsd: number) => void;
+  enabledModels: string[];
+  activeModelId: string | null;
+  onLoginRequired: () => void;
 }
+
+export type ChatBanner = 'credit' | 'locked' | null;
 
 export function useChat(opts: ChatOptions) {
   const [items, setItems] = useState<TimelineItem[]>([]);
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const [activities, setActivities] = useState<Array<{ id: string; kind: ActivityKind }>>([]);
+
+  /* ---------------- model picker state ---------------- */
+  const [pickedModelId, setPickedModelId] = useState<string | null>(null);
+  const [effortPick, setEffortPick] = useState<string | null>(null);
+  const [fast, setFast] = useState(false);
+  const [banner, setBanner] = useState<ChatBanner>(null);
+
+  const modelId = pickedModelId ?? opts.activeModelId ?? opts.enabledModels[0] ?? null;
+  const activeModel = modelById(modelId);
+  const effortOptions = pickerEfforts(activeModel);
+  const effort =
+    effortPick && effortOptions.includes(effortPick) ? effortPick : defaultEffort(activeModel);
+  const fastAvailable = hasFast(activeModel);
+
+  /* A new model resets effort/fast to sensible defaults. */
+  const lastModelRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastModelRef.current !== modelId) {
+      lastModelRef.current = modelId;
+      setEffortPick(null);
+      setFast(false);
+    }
+  }, [modelId]);
+
+  const selectModel = useCallback((id_: string) => {
+    setPickedModelId(id_);
+    void api.saveSettings({ activeModelId: id_ }).catch(() => {
+      /* non-fatal — the pick still applies to this session */
+    });
+  }, []);
 
   const runningRef = useRef(false);
   const streamingIdRef = useRef<number | null>(null);
@@ -214,7 +250,18 @@ export function useChat(opts: ChatOptions) {
           finishTurn();
           break;
         case 'turn_error':
-          finishTurn(ev.message || opts.t('app.genericTurnError'));
+          if (ev.code === 'login_required') {
+            finishTurn();
+            opts.onLoginRequired();
+          } else if (ev.code === 'insufficient_credit') {
+            setBanner('credit');
+            finishTurn();
+          } else if (ev.code === 'subscription_locked') {
+            setBanner('locked');
+            finishTurn();
+          } else {
+            finishTurn(ev.message || opts.t('app.genericTurnError'));
+          }
           break;
       }
     };
@@ -240,13 +287,18 @@ export function useChat(opts: ChatOptions) {
       streamingIdRef.current = null;
       runningRef.current = true;
       setRunning(true);
+      setBanner(null);
       try {
-        await api.startTurn(prompt);
+        await api.startTurn(prompt, {
+          ...(modelId ? { modelId } : {}),
+          ...(effort ? { effort } : {}),
+          ...(fastAvailable ? { fast } : {}),
+        });
       } catch (err) {
         finishTurn(opts.translateError(err, 'app.turnStartFailed'));
       }
     },
-    [input, finishTurn, opts],
+    [input, finishTurn, opts, modelId, effort, fast, fastAvailable],
   );
 
   const undoChanges = async (itemId: number) => {
@@ -334,6 +386,17 @@ export function useChat(opts: ChatOptions) {
     activities,
     scrollRef,
     textareaRef,
+    modelId,
+    activeModel,
+    effort,
+    effortOptions,
+    fast,
+    fastAvailable,
+    banner,
+    dismissBanner: () => setBanner(null),
+    selectModel,
+    setEffort: setEffortPick,
+    setFast,
     send,
     undoChanges,
     decideApproval,
