@@ -46,7 +46,7 @@ import { finalizeTurnUsage } from "./cost.js";
 
 import { resolveApproval } from "./guard.js";
 import { getLastTurnDiff } from "./engine.js";
-import { runTurn, isTurnRunning, setTurnRunning, getPendingPlan, setPendingPlan } from "./turns.js";
+import { runTurn, matureIdea, isTurnRunning, setTurnRunning, getPendingPlan, setPendingPlan } from "./turns.js";
 
 const PORT = Number(process.env.PORT || 7331);
 
