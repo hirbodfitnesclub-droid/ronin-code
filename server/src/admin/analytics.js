@@ -91,6 +91,31 @@ export function registerAnalyticsRoutes(router, { db, cfg, guard }) {
     const month = await db.one(
       `SELECT COALESCE(SUM(amount_rials),0)::bigint AS s FROM public.expenses
        WHERE spent_on >= date_trunc('month', current_date)::date`);
+    // Phase 2 provider figures (§7.4): observed, not booked — the ledger
+    // totals above remain the financial truth.
+    let providerContext = null;
+    try {
+      const keyAgg = await db.one(
+        `SELECT
+           count(*) FILTER (WHERE status = 'active')::int AS active,
+           count(*) FILTER (WHERE status = 'frozen')::int AS frozen,
+           count(*) FILTER (WHERE status = 'needs_attention')::int AS needs_attention,
+           COALESCE(SUM(tokens_used_observed),0)::bigint AS used_observed,
+           (SELECT balance_observed FROM public.user_provider_keys WHERE balance_observed IS NOT NULL ORDER BY balance_observed_at DESC LIMIT 1) AS any_balance
+         FROM public.user_provider_keys`);
+      const drift = await db.one(
+        "SELECT count(*)::int AS c FROM public.risk_flags WHERE kind = 'provider_drift' AND status = 'open'");
+      const poolAudit = await db.one(
+        "SELECT meta FROM public.admin_audit WHERE action = 'provider_pool_low' ORDER BY id DESC LIMIT 1");
+      providerContext = {
+        providerKeys: {
+          active: keyAgg.active, frozen: keyAgg.frozen, needsAttention: keyAgg.needs_attention,
+          openDriftFlags: drift.c,
+        },
+        providerTokensUsedObserved: Number(keyAgg.used_observed),
+        poolBalanceObserved: poolAudit?.meta?.poolObserved ?? null,
+      };
+    } catch { /* tables exist from migration 00007; absence must not break the analyst */ }
     const context = {
       generatedAt: new Date().toISOString(),
       totals: overview.totals,
@@ -98,6 +123,7 @@ export function registerAnalyticsRoutes(router, { db, cfg, guard }) {
       topModels: overview.topModels,
       last30Days: overview.series,
       expensesThisMonthRials: Number(month.s),
+      ...(providerContext ? providerContext : {}),
     };
 
     const ctrl = new AbortController();

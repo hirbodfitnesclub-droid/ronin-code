@@ -1,8 +1,12 @@
 import { requireRateLimit } from './ratelimit.js';
 import { getMultiplier, getModelEntry } from './settings.js';
 import { reserveHold, commitHold, releaseHold, spendableTokens } from './ledger.js';
-import { HttpError, badRequest, paymentRequired } from './util.js';
+import { HttpError, badRequest, paymentRequired, forbidden } from './util.js';
 import { readBody, sendJson } from './http.js';
+import { routedPerUser } from './reseller/routing.js';
+import { decryptDelegatedKey } from './reseller/crypto.js';
+import { raiseAttentionFlag } from './reseller/reconcile.js';
+import { log } from './log.js';
 
 /**
  * Metering proxy — POST /v1/chat/completions (OpenAI-compatible).
@@ -26,12 +30,19 @@ function estimatePromptTokens(body) {
   return Math.ceil(chars / 4);
 }
 
-export async function handleChatCompletions(db, cfg, req, res, user) {
+export async function handleChatCompletions(db, cfg, req, res, user, opts = {}) {
   const raw = await readBody(req, 4_000_000);
   let body;
   try { body = JSON.parse(raw.toString('utf8') || '{}'); }
   catch { throw badRequest('invalid_json', 'Body must be JSON.'); }
   if (!body || typeof body !== 'object' || !body.model) throw badRequest('model_required', 'model is required.');
+
+  // Phase 2 thin relay (§6): per-user users bypass Hold/Commit entirely —
+  // the provider enforces their own key's allowance.
+  const routing = await routedPerUser(db, cfg, user.id);
+  if (routing.perUser || opts.delegatedKey) {
+    return handlePerUser(db, cfg, req, res, user, body, routing.keyRow, opts);
+  }
   if (!cfg.upstreamBaseUrl || !cfg.upstreamApiKey)
     throw new HttpError(503, 'upstream_not_configured', 'Subscription upstream is not configured on this server.');
 
@@ -178,3 +189,114 @@ async function proxyStream(db, cfg, upstream, res, hold, multiplier, body) {
     });
   }
 }
+
+// ── Phase 2 thin relay (§6) ─────────────────────────────────────────────────
+// No Hold/Commit, no multipliers, no shared key. Dual-auth converges in
+// app.js: opts.delegatedKey = path B (host presented its delegated key),
+// otherwise path A (session Bearer) decrypts server-side here.
+async function handlePerUser(db, cfg, req, res, user, body, keyRow, opts) {
+  const userId = user.id;
+  if (!cfg.cvcBaseUrl) throw new HttpError(503, 'upstream_not_configured', 'Provider is not configured on this server.');
+  if (!keyRow) {
+    const { getKeyRow } = await import('./reseller/routing.js');
+    keyRow = await getKeyRow(db, userId);
+  }
+  if (!keyRow?.encrypted_key && !opts.delegatedKey) {
+    throw new HttpError(503, 'provider_key_not_ready', 'Your provider key is still being set up.');
+  }
+  if (keyRow?.status === 'frozen' || !user.is_active) {
+    throw forbidden('account_suspended', 'Account suspended.');
+  }
+  if (keyRow?.status === 'deleted') {
+    throw new HttpError(503, 'provider_key_not_ready', 'Your provider key is not ready.');
+  }
+  if (keyRow?.status === 'needs_attention') {
+    log.warn('proxy_key_needs_attention_proceeding', { userId });
+  }
+
+  await requireRateLimit(db, `chat:min:${userId}`, cfg.chatRatePerMin, 60_000, 'chat_rate_limited');
+  const concurrent = inFlight.get(userId) ?? 0;
+  if (concurrent >= cfg.chatMaxConcurrent) throw new HttpError(429, 'too_many_concurrent', 'Too many concurrent requests.');
+  inFlight.set(userId, concurrent + 1);
+  try {
+    const entry = await getModelEntry(db, cfg, body.model);
+    if (entry && entry.enabled === false) {
+      throw new HttpError(403, 'model_disabled', `Model ${body.model} is disabled by the admin.`);
+    }
+    let delegatedKey = opts.delegatedKey ?? null;
+    if (!delegatedKey) {
+      try {
+        delegatedKey = decryptDelegatedKey(cfg, keyRow.encrypted_key, { userId, keyRowId: keyRow.id });
+      } catch {
+        await raiseAttentionFlag(db, userId, `decrypt failure for key row ${keyRow.id}`).catch(() => {});
+        throw new HttpError(503, 'provider_key_not_ready', 'Your provider key needs attention.');
+      }
+    }
+    // Fast (§6.2 step 3): x-ronin-fast header or ronin_fast body flag →
+    // service_tier 'priority'; Ronin control fields never leak upstream.
+    const fast = ['1', 'true'].includes(String(req.headers['x-ronin-fast'] ?? '').toLowerCase())
+      || body.ronin_fast === true;
+    delete body.ronin_fast;
+    if (fast) body.service_tier = 'priority';
+
+    // Throttled last-used touch (≤1/min/user) — drives activity-tiered polling.
+    const lastUsed = keyRow.last_used_at ? new Date(keyRow.last_used_at).getTime() : 0;
+    if (Date.now() - lastUsed > 60_000) {
+      void db.query('UPDATE public.user_provider_keys SET last_used_at = now() WHERE id = $1', [keyRow.id]).catch(() => {});
+    }
+
+    let upstream;
+    try {
+      upstream = await fetch(`${cfg.cvcBaseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${delegatedKey}` },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new HttpError(502, 'upstream_unreachable', 'Upstream gateway unreachable.');
+    }
+
+    // Error mapping (§6.4)
+    if (upstream.status === 402) {
+      await upstream.text().catch(() => '');
+      throw paymentRequired('insufficient_credit', 'Insufficient token credit.');
+    }
+    if (upstream.status === 401) {
+      await upstream.text().catch(() => '');
+      await raiseAttentionFlag(db, userId, 'provider rejected the delegated key (401)').catch(() => {});
+      throw new HttpError(502, 'provider_key_invalid', 'Provider rejected the key.');
+    }
+    if (upstream.status === 403) {
+      await upstream.text().catch(() => '');
+      log.error('provider_forbidden_runtime', { userId });
+      throw new HttpError(502, 'provider_forbidden', 'Provider refused the request.');
+    }
+
+    const headers = { 'Content-Type': upstream.headers.get('content-type') || 'application/json' };
+    const retryAfter = upstream.headers.get('retry-after');
+    if (retryAfter) headers['Retry-After'] = retryAfter;
+
+    if (body.stream === true && upstream.body) {
+      res.writeHead(upstream.status, {
+        ...headers, 'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache', Connection: 'keep-alive',
+      });
+      const reader = upstream.body.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(Buffer.from(value));
+        }
+      } catch { /* stream broke — nothing to settle in per-user mode */ }
+      finally { try { res.end(); } catch { /* closed */ } }
+      return;
+    }
+    const text = await upstream.text();
+    res.writeHead(upstream.status, headers);
+    return res.end(text);
+  } finally {
+    inFlight.set(userId, Math.max(0, (inFlight.get(userId) ?? 1) - 1));
+  }
+}
+

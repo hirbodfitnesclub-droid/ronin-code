@@ -63,6 +63,22 @@ export function startFakeUpstream({ promptTokens = 100, completionTokens = 50 } 
 export async function startStack(overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ronin-test-'));
   const upstream = await startFakeUpstream(overrides.upstreamUsage ?? {});
+  // Phase 2 mock provider (opt-in): faithful reseller contract + fault injection.
+  let mockCvc = null;
+  if (overrides.mockCvc) {
+    const { startMockCvc, MOCK_PRIMARY } = await import('./mock-cvc.mjs');
+    mockCvc = await startMockCvc();
+    overrides = {
+      ...overrides,
+      cfg: {
+        cvcBaseUrl: mockCvc.url, cvcPrimaryApiKey: MOCK_PRIMARY,
+        cvcKeyEncryptionKey: Buffer.alloc(32, 7).toString('base64'),
+        cvcMutationTimeoutMs: 400, cvcReadTimeoutMs: 2000,
+        resellerBackoffBaseMs: 10,
+        ...(overrides.cfg ?? {}),
+      },
+    };
+  }
   const pgPort = await freePort();
   const gotruePort = await freePort();
   const otpExpSeconds = overrides.gotrue?.smsOtpExpSeconds ?? 300;
@@ -121,7 +137,7 @@ export async function startStack(overrides = {}) {
     }), { logFile: path.join(dir, 'gotrue.log') });
 
     return {
-      db, cfg, sms, upstream,
+      db, cfg, sms, upstream, mockCvc,
       base: `http://127.0.0.1:${api.address().port}`,
       adminBase: `http://127.0.0.1:${admin.address().port}`,
       async close() {
@@ -131,6 +147,7 @@ export async function startStack(overrides = {}) {
         api.close();
         admin.close();
         upstream.server.close();
+        if (mockCvc) await mockCvc.close();
         await db.end();
         await pg.stop();
         fs.rmSync(dir, { recursive: true, force: true });

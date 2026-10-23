@@ -96,6 +96,18 @@ export function loadConfig(overrides = {}) {
     tokensPerUsd: int(env.TOKENS_PER_USD, 20_000_000),
     upstreamBaseUrl: (env.UPSTREAM_BASE_URL || '').replace(/\/$/, ''),
     upstreamApiKey: env.UPSTREAM_API_KEY || '',
+
+    // ── Phase 2: per-user provider keys (reseller) ─────────────────────
+    // Control-plane primary key + base URL; values ONLY from env, never
+    // logged/returned/stored. cvcBaseUrl carries NO /v1 suffix (contract).
+    cvcBaseUrl: (env.CVC_BASE_URL || '').replace(/\/$/, ''),
+    cvcPrimaryApiKey: env.CVC_PRIMARY_API_KEY || '',
+    // AES-256-GCM key for delegated keys at rest: base64, exactly 32 bytes.
+    cvcKeyEncryptionKey: env.CVC_KEY_ENCRYPTION_KEY || '',
+    resellerDrainMs: int(env.RESELLER_DRAIN_MS, 15_000),
+    resellerBackoffBaseMs: int(env.RESELLER_BACKOFF_BASE_MS, 30_000),
+    cvcMutationTimeoutMs: int(env.CVC_MUTATION_TIMEOUT_MS, 10_000),
+    cvcReadTimeoutMs: int(env.CVC_READ_TIMEOUT_MS, 8_000),
     maxDevices: int(env.MAX_DEVICES, 2),
     chatRatePerMin: int(env.CHAT_RATE_PER_MIN, 60),
     chatMaxConcurrent: int(env.CHAT_MAX_CONCURRENT, 3),
