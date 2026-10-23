@@ -15,6 +15,17 @@ test('subscription_locked and account_suspended show the locked banner', () => {
   assert.equal(bannerForTurnError('account_suspended'), 'locked');
 });
 
+test('hard battery: mid-stream 402 code lands on credit; frozen-relay code lands on locked, not model_disabled', () => {
+  // H1: the host surfaces a mid-stream provider 402 as insufficient_credit.
+  assert.equal(bannerForTurnError('insufficient_credit'), 'credit');
+  // H3: the relay's frozen-key 403 arrives as subscription_locked from the
+  // host (classifier fix) — the locked banner, while a genuine model
+  // problem (model_disabled) must NOT be shown as locked or credit.
+  assert.equal(bannerForTurnError('subscription_locked'), 'locked');
+  assert.notEqual(bannerForTurnError('model_disabled'), 'locked');
+  assert.notEqual(bannerForTurnError('model_disabled'), 'credit');
+});
+
 test('transient and generic codes show no banner', () => {
   assert.equal(bannerForTurnError('provider_key_not_ready'), null);
   assert.equal(bannerForTurnError('provider_key_invalid'), null);

@@ -8,14 +8,23 @@
 //                                         device (401 refresh_reuse)
 //   POST /api/auth/logout              -> { ok: true }
 //   GET  /api/account-status           -> mutable account object
-//   POST /v1/chat/completions          -> metering proxy: records
-//                                         headers/body, replies with
-//                                         an SSE text completion +
-//                                         usage (or a control-set
-//                                         error such as 402)
+//   GET  /api/subscription/credential  -> Phase 2 delegated-key delivery
+//                                         (design §5.2): session-authed;
+//                                         shared -> no key material,
+//                                         per_user -> the fake key
+//   POST /v1/chat/completions          -> relay: records headers/body,
+//                                         replies with an SSE text
+//                                         completion + usage (or a
+//                                         control-set error such as
+//                                         402). Dual-auth (§6.2): in
+//                                         per-user mode the delegated
+//                                         key OR a session token is
+//                                         accepted; a stale fake key
+//                                         gets 401 provider_key_invalid
 // Test controls:
-//   POST /__control { account?, proxyMode?, tokenTtlSec? }
-//   GET  /__requests -> { proxy, refreshSeen, accountStatusAuth }
+//   POST /__control { account?, proxyMode?, tokenTtlSec?, routingMode?,
+//                     credentialKey?, credentialKeyStatus? }
+//   GET  /__requests -> { proxy, refreshSeen, accountStatusAuth, credentialFetches }
 //   GET  /__state    -> { currentRefresh, refreshSeen }
 
 import http from "node:http";
@@ -31,6 +40,11 @@ const state = {
   revoked: false,
   tokenTtlSec: 3600,
   proxyMode: "ok",
+  // Phase 2 per-user key state. Obvious fakes only.
+  routingMode: "shared",
+  credentialKey: "sk-ronin-FAKE-e2e-key-0001",
+  credentialKeyStatus: "active",
+  credentialFetches: 0,
   account: {
     status: "active",
     isActive: true,
@@ -87,6 +101,54 @@ function sendText(res, text, usage = { prompt_tokens: 100, completion_tokens: 20
   res.end();
 }
 
+/** Streaming response shaped by state.proxyMode (hard battery §1):
+ *  default -> one-shot completion; "slow" -> chunked over ~1.5s;
+ *  "402-midstream" -> partial content, then an SSE error frame
+ *  carrying insufficient_credit, then close; "hang-close" -> headers,
+ *  silence, then the socket is destroyed early. */
+function respondStream(res) {
+  const mode = state.proxyMode;
+  const id = `chatcmpl-${Math.random().toString(36).slice(2, 9)}`;
+  const base = { id, object: "chat.completion.chunk", created: 1700000000, model: "stub" };
+  const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
+  if (mode === "hang-close") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+    setTimeout(() => { try { res.destroy(); } catch {} }, 400);
+    return;
+  }
+  if (mode === "402-midstream") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+    sseChunk(res, { ...base, choices: [{ index: 0, delta: { role: "assistant", content: "Partial reply " }, finish_reason: null }] });
+    setTimeout(() => {
+      try {
+        sseChunk(res, { ...base, choices: [], error: { code: "insufficient_credit", message: "402 insufficient_credit" } });
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } catch {}
+    }, 250);
+    return;
+  }
+  if (mode === "slow") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+    let i = 0;
+    const timer = setInterval(() => {
+      try {
+        i += 1;
+        if (i <= 5) {
+          sseChunk(res, { ...base, choices: [{ index: 0, delta: { role: "assistant", content: "Slow reply. " }, finish_reason: null }] });
+        } else {
+          clearInterval(timer);
+          sseChunk(res, { ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage });
+          res.write("data: [DONE]\n\n");
+          res.end();
+        }
+      } catch { clearInterval(timer); }
+    }, 250);
+    return;
+  }
+  return sendText(res, "Subscription reply.");
+}
+
 function readBody(req) {
   return new Promise((resolve) => {
     const chunks = [];
@@ -107,10 +169,13 @@ const server = http.createServer(async (req, res) => {
     if (body.account && typeof body.account === "object") Object.assign(state.account, body.account);
     if (typeof body.proxyMode === "string") state.proxyMode = body.proxyMode;
     if (typeof body.tokenTtlSec === "number") state.tokenTtlSec = body.tokenTtlSec;
+    if (body.routingMode === "per_user" || body.routingMode === "shared") state.routingMode = body.routingMode;
+    if (typeof body.credentialKey === "string") state.credentialKey = body.credentialKey;
+    if (typeof body.credentialKeyStatus === "string") state.credentialKeyStatus = body.credentialKeyStatus;
     return sendJson(res, 200, { ok: true });
   }
   if (pathname === "/__requests" && req.method === "GET") {
-    return sendJson(res, 200, { proxy: proxyRequests, refreshSeen, accountStatusAuth });
+    return sendJson(res, 200, { proxy: proxyRequests, refreshSeen, accountStatusAuth, credentialFetches: state.credentialFetches });
   }
   if (pathname === "/__state" && req.method === "GET") {
     return sendJson(res, 200, { currentRefresh: state.currentRefresh, currentAccess: state.currentAccess, refreshSeen });
@@ -156,18 +221,69 @@ const server = http.createServer(async (req, res) => {
     if (state.revoked || !state.validAccess.has(bearer)) {
       return sendJson(res, 401, { error: "session_revoked" });
     }
-    return sendJson(res, 200, state.account);
+    return sendJson(res, 200, {
+      ...state.account,
+      routingMode: state.routingMode,
+      ...(state.routingMode === "per_user"
+        ? {
+            providerKey: {
+              status: state.credentialKeyStatus,
+              tokenLimitIssued: 20_000_000,
+              balanceStale: false,
+            },
+          }
+        : {}),
+    });
   }
-  if (pathname === "/v1/chat/completions" && req.method === "POST") {
-    const body = await readBody(req);
-    proxyRequests.push({ at: Date.now(), headers: req.headers, body });
-    if (state.proxyMode === "402") return sendJson(res, 402, { error: "insufficient_credit" });
-    if (state.proxyMode === "401") return sendJson(res, 401, { error: "session_revoked" });
+  if (pathname === "/api/subscription/credential" && req.method === "GET") {
+    state.credentialFetches += 1;
     const bearer = (req.headers.authorization || "").replace("Bearer ", "");
     if (state.revoked || !state.validAccess.has(bearer)) {
       return sendJson(res, 401, { error: "session_revoked" });
     }
-    return sendText(res, "Subscription reply.");
+    if (state.account.status !== "active" || state.account.isActive !== true) {
+      return sendJson(res, 403, { error: { code: "account_disabled" } });
+    }
+    if (state.routingMode === "shared") return sendJson(res, 200, { routingMode: "shared" });
+    const withKey = state.credentialKeyStatus === "active" || state.credentialKeyStatus === "needs_attention";
+    return sendJson(res, 200, {
+      routingMode: "per_user",
+      keyStatus: state.credentialKeyStatus,
+      tokenLimitIssued: 20_000_000,
+      issuedAt: "2026-10-23T00:00:00.000Z",
+      ...(withKey ? { delegatedKey: state.credentialKey } : {}),
+    });
+  }
+  if (pathname === "/v1/chat/completions" && req.method === "POST") {
+    const body = await readBody(req);
+    const bearer = (req.headers.authorization || "").replace("Bearer ", "");
+    const authKind =
+      state.routingMode === "per_user" && bearer === state.credentialKey
+        ? "delegated"
+        : state.validAccess.has(bearer)
+          ? "session"
+          : "none";
+    proxyRequests.push({ at: Date.now(), headers: req.headers, body, authKind });
+    if (state.proxyMode === "402") return sendJson(res, 402, { error: "insufficient_credit" });
+    if (state.proxyMode === "401") return sendJson(res, 401, { error: "session_revoked" });
+    if (state.proxyMode === "suspended") return sendJson(res, 403, { error: "account_suspended" });
+    if (state.routingMode === "per_user") {
+      // Dual-auth (§6.2): delegated key or session token. A fake-shaped
+      // but unknown key is a stale key -> provider_key_invalid (401).
+      if (bearer === state.credentialKey) {
+        if (state.credentialKeyStatus === "frozen") {
+          return sendJson(res, 403, { error: "account_suspended" });
+        }
+        return respondStream(res);
+      }
+      if (bearer.startsWith("sk-ronin-FAKE")) {
+        return sendJson(res, 401, { error: "provider_key_invalid" });
+      }
+    }
+    if (state.revoked || !state.validAccess.has(bearer)) {
+      return sendJson(res, 401, { error: "session_revoked" });
+    }
+    return respondStream(res);
   }
 
   return sendJson(res, 404, { error: "not_found" });

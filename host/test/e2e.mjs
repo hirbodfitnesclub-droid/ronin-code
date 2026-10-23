@@ -320,6 +320,67 @@ await api("POST", "/api/settings", { enabledModels: ["gpt-6-luna"] });
   await roninControl({ proxyMode: "ok" });
 }
 
+// ---------- SUB-G: per-user mode — delegated key is fetched, stored, and used ----------
+{
+  const FAKE1 = "sk-ronin-FAKE-e2e-key-0001";
+  await roninControl({ routingMode: "per_user" });
+  await api("POST", "/api/auth/refresh-status", {});
+  const credsG = JSON.parse(fs.readFileSync(path.join(HOME, "credentials.json"), "utf8"));
+  check("SUB-G: delegated key stored in credentials.json", credsG.subscriptionKey === FAKE1);
+  check("SUB-G: credential fingerprint stored, routingMode per_user",
+    typeof credsG.subscriptionKeyFingerprint === "string" && credsG.routingMode === "per_user");
+  const authJsonG = fs.existsSync(path.join(HOME, "auth.json")) ? fs.readFileSync(path.join(HOME, "auth.json"), "utf8") : "";
+  const configJsonG = fs.existsSync(path.join(HOME, "config.json")) ? fs.readFileSync(path.join(HOME, "config.json"), "utf8") : "";
+  check("SUB-G: delegated key never lands in auth.json / config.json",
+    !authJsonG.includes(FAKE1) && !configJsonG.includes(FAKE1));
+  const stG = await api("GET", "/api/auth/state");
+  check("SUB-G: GUI state carries only the masked key",
+    stG.json.subscription?.subscriptionKeyMasked === `••••${FAKE1.slice(-4)}` &&
+      !JSON.stringify(stG.json).includes(FAKE1));
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "subscription via delegated key", modelId: "gpt-6-luna" });
+  const doneG = await waitEvent("turn_done", 60000, mark);
+  check("SUB-G: per-user subscription turn completes", Boolean(doneG));
+  const reqsG = await roninRequests();
+  const lastG = reqsG.proxy[reqsG.proxy.length - 1];
+  check("SUB-G: relay received the delegated key (dual-auth), not the session token",
+    Boolean(lastG) && lastG.authKind === "delegated" && lastG.headers.authorization === `Bearer ${FAKE1}`,
+    lastG ? `authKind=${lastG.authKind}` : "no proxy request");
+  check("SUB-G: credential endpoint was fetched", reqsG.credentialFetches >= 1, `fetches=${reqsG.credentialFetches}`);
+}
+
+// ---------- SUB-H: relay 403 account_suspended -> subscription_locked (never model_disabled) ----------
+{
+  await roninControl({ proxyMode: "suspended" });
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "subscription while frozen at relay", modelId: "gpt-6-luna" });
+  const errH = await waitEvent("turn_error", 90000, mark, (e) => e.code === "subscription_locked");
+  check("SUB-H: relay account_suspended -> turn_error subscription_locked", Boolean(errH));
+  const wrongH = events.slice(mark).find((e) => e.type === "turn_error" && e.code === "model_disabled");
+  check("SUB-H: suspended is never mislabelled model_disabled", !wrongH);
+  await roninControl({ proxyMode: "ok" });
+}
+
+// ---------- SUB-I: stale key self-heals via one credential re-fetch + retry ----------
+{
+  const FAKE2 = "sk-ronin-FAKE-e2e-key-0002";
+  const before = await roninRequests();
+  await roninControl({ credentialKey: FAKE2 }); // provider-side rotation; host still holds FAKE1
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "subscription after key rotation", modelId: "gpt-6-luna" });
+  const doneI = await waitEvent("turn_done", 90000, mark);
+  check("SUB-I: turn self-heals after stale-key 401 and completes", Boolean(doneI));
+  const after = await roninRequests();
+  check("SUB-I: exactly one extra credential fetch for the heal",
+    after.credentialFetches === before.credentialFetches + 1,
+    `before=${before.credentialFetches} after=${after.credentialFetches}`);
+  const lastI = after.proxy[after.proxy.length - 1];
+  check("SUB-I: retry reached the relay with the rotated key",
+    Boolean(lastI) && lastI.headers.authorization === `Bearer ${FAKE2}`);
+  const credsI = JSON.parse(fs.readFileSync(path.join(HOME, "credentials.json"), "utf8"));
+  check("SUB-I: rotated key persisted", credsI.subscriptionKey === FAKE2);
+}
+
 // ---------- SUB-F: refresh rotation persists the newest token ----------
 {
   await roninControl({ tokenTtlSec: 30 });
