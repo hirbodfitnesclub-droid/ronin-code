@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card, Chip } from '../../components/ui';
 import { api, type AccountStatus, type MeResult, type UsageSummary } from '../../lib/api';
-import { useLang } from '../../lib/i18n';
+import { buildProviderKeySummaryView, isProviderBalanceUnavailable } from '../../lib/api/usage';
+import { useLang, type StringKey } from '../../lib/i18n';
 import type { View } from '../../lib/view';
 import { WeekChart } from './WeekChart';
 import './dashboard.css';
@@ -83,6 +84,16 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
   const tomanRials = data.rateRialsPerToken !== null ? Math.round(me.balanceTokens * data.rateRialsPerToken) : null;
   const expiringLot = status.lots.find((lot) => lot.expiresAt);
   const topTotal = usage.topModels.reduce((sum, m) => sum + m.tokens, 0);
+  /* Phase 2 (§7.1): in per-user mode the balance is the provider-backed figure
+     already substituted into me/status by the server; providerKey carries the
+     key status + staleness. Shared-mode users see none of this. */
+  const perUser = (status.routingMode ?? me.routingMode) === 'per_user';
+  const providerKey = status.providerKey ?? me.providerKey ?? null;
+  const balanceUnavailable = perUser && isProviderBalanceUnavailable(providerKey);
+  /* All key display strings come from the view builder — the component never
+     renders the raw keyLast4 field (masking enforced at the boundary). */
+  const keyView = perUser ? buildProviderKeySummaryView(providerKey) : null;
+  const keyHint = keyView?.hint ?? null;
 
   return (
     <div>
@@ -93,15 +104,25 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
 
       <Card className="dash-balance">
         <div className="dash-balance-label">{t('dashboard.balance')}</div>
-        <div className="dash-balance-value ltr-island">{fmtNum(me.balanceTokens)}</div>
-        <div className="dash-balance-unit">{t('common.tokens')}</div>
-        {me.spendableTokens !== me.balanceTokens ? (
+        {balanceUnavailable ? (
+          <p className="dash-balance-unavailable">{t('dashboard.balanceUnavailable')}</p>
+        ) : (
+          <>
+            <div className="dash-balance-value ltr-island">{fmtNum(me.balanceTokens)}</div>
+            <div className="dash-balance-unit">{t('common.tokens')}</div>
+          </>
+        )}
+        {!perUser && me.spendableTokens !== me.balanceTokens ? (
           <div className="dash-spendable">
             {t('dashboard.spendable')}: <span className="ltr-island">{fmtNum(me.spendableTokens)}</span>
           </div>
         ) : null}
-        {tomanRials !== null ? (
+        {!balanceUnavailable && tomanRials !== null ? (
           <div className="dash-toman">{t('dashboard.tomanEquivalent', { amount: fmtToman(tomanRials) })}</div>
+        ) : null}
+        {perUser && !balanceUnavailable ? <div className="dash-toman">{t('dashboard.perUserNote')}</div> : null}
+        {perUser && providerKey?.balanceStale && !balanceUnavailable ? (
+          <div className="dash-stale">{t('dashboard.balanceStale')}</div>
         ) : null}
         <button type="button" className="btn btn-primary dash-buy-btn" onClick={goBuy}>
           {t('dashboard.buyCredit')}
@@ -140,6 +161,7 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
         ) : (
           <p className="dash-empty-note">{t('dashboard.noUsage')}</p>
         )}
+        {usage.hasPartialDays ? <p className="dash-partial-note">{t('dashboard.partialNote')}</p> : null}
       </Card>
 
       <Card>
@@ -157,6 +179,20 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
               date: fmtDate(expiringLot.expiresAt),
             })}
           </p>
+        ) : null}
+        {perUser && keyView ? (
+          <div className="dash-key-row" data-testid="provider-key-summary">
+            <span className="dash-key-label">{t('dashboard.providerKey')}</span>
+            <Chip tone={keyView.status === 'active' ? 'green' : keyView.status === 'frozen' ? 'accent' : 'amber'}>
+              {t(`dashboard.keyStatus.${keyView.status}` as StringKey)}
+            </Chip>
+            <span className="dash-key-issued">{t('dashboard.keyIssued', { count: fmtNum(keyView.issuedTokens) })}</span>
+            {keyHint ? (
+              <span className="dash-key-hint">
+                {t('dashboard.keyLabel')} <span className="ltr-island">{keyHint}</span>
+              </span>
+            ) : null}
+          </div>
         ) : null}
       </Card>
 

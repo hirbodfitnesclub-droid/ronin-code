@@ -31,3 +31,4 @@
 .history-center { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 28px 0; color: var(--text-dim); }
 
 .history-note { color: var(--text-faint); font-size: 12px; text-align: center; margin-top: 14px; }
+.history-recent-note { color: var(--text-dim); font-size: 13px; margin: 0 0 6px; }

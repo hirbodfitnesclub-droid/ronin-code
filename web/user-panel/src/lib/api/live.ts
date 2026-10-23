@@ -1,6 +1,6 @@
-import { ApiError } from './errors';
-import { clearSession, loadSession, saveSession } from './session';
-import { deriveUsage } from './usage';
+import { ApiError } from './errors.ts';
+import { clearSession, loadSession, saveSession } from './session.ts';
+import { deriveUsage, isPerUserMode, mapRecentUsage } from './usage.ts';
 import type {
   AccountStatus,
   Claim,
@@ -13,12 +13,14 @@ import type {
   OtpVerifyResult,
   PacksResult,
   PanelApi,
+  RecentUsageResult,
+  RoutingMode,
   Session,
   UsageSummary,
   User,
 } from './types';
 
-const BASE: string = import.meta.env.VITE_API_BASE_URL ?? '';
+const BASE: string = import.meta.env?.VITE_API_BASE_URL ?? '';
 
 interface ErrorBody {
   error?: { code?: string; message?: string };
@@ -26,6 +28,12 @@ interface ErrorBody {
 
 export class LiveApiClient implements PanelApi {
   private session: Session | null = loadSession();
+  /** Routing mode (§7.1) is learned from /api/account-status and cached for
+      60s so usageSummary()/recentUsage() can branch without a fetch storm.
+      Dashboard calls accountStatus() + usageSummary() in parallel; the
+      in-flight promise is shared. */
+  private routingCache: { mode: RoutingMode; at: number } | null = null;
+  private routingInFlight: Promise<RoutingMode> | null = null;
 
   getSession(): Session | null {
     return this.session;
@@ -132,8 +140,25 @@ export class LiveApiClient implements PanelApi {
     return r.user;
   }
 
-  accountStatus(): Promise<AccountStatus> {
-    return this.get('/api/account-status');
+  async accountStatus(): Promise<AccountStatus> {
+    const status = await this.get<AccountStatus>('/api/account-status');
+    if (status.routingMode) this.routingCache = { mode: status.routingMode, at: Date.now() };
+    return status;
+  }
+
+  /** Resolve the routing mode, defaulting to 'shared' on any failure so the
+      v1 ledger-derived path remains the safe fallback. */
+  async routingMode(): Promise<RoutingMode> {
+    if (this.routingCache && Date.now() - this.routingCache.at < 60_000) return this.routingCache.mode;
+    if (!this.routingInFlight) {
+      this.routingInFlight = this.accountStatus()
+        .then((s) => s.routingMode ?? 'shared')
+        .catch(() => 'shared' as RoutingMode)
+        .finally(() => {
+          this.routingInFlight = null;
+        });
+    }
+    return this.routingInFlight;
   }
 
   packs(): Promise<PacksResult> {
@@ -172,8 +197,21 @@ export class LiveApiClient implements PanelApi {
     return toClaim(r.order ?? r);
   }
 
+  /* §7.3 / C6: per-user mode MUST NOT derive from ledger consume rows (they
+     stop being written and the dashboard would silently flatline). The server
+     summary endpoint is computed from key_usage_daily rollups instead. */
   async usageSummary(): Promise<UsageSummary> {
+    if (isPerUserMode(await this.routingMode())) {
+      return this.get<UsageSummary>('/api/usage/summary');
+    }
     return deriveUsage(await this.credits());
+  }
+
+  /* §7.2: recent activity from the provider-logs-backed endpoint. Shared-mode
+     users have no delegated key — return null and the UI hides the section. */
+  async recentUsage(): Promise<RecentUsageResult | null> {
+    if (!isPerUserMode(await this.routingMode())) return null;
+    return mapRecentUsage(await this.get('/api/usage/recent'));
   }
 
   /** Mint a one-time desktop connection code (Bearer session required). */
@@ -195,5 +233,6 @@ export function toClaim(o: OrderRow): Claim {
     hasReceipt: o.hasReceipt,
     createdAt: o.createdAt,
     reviewedAt: o.reviewedAt,
+    issuanceState: o.issuanceState ?? null,
   };
 }

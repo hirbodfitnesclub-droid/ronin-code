@@ -35,6 +35,10 @@
 .badge-rejected, .badge-inactive { background: var(--accent-soft); color: var(--accent-bright); border-color: rgba(229,72,77,.3); }
 .badge-refunded { background: rgba(86,200,216,.12); color: var(--cyan); border-color: rgba(86,200,216,.3); }
 .badge-warn { background: rgba(232,161,60,.16); color: var(--amber); border-color: rgba(232,161,60,.4); }
+.badge-frozen { background: rgba(86,200,216,.12); color: var(--cyan); border-color: rgba(86,200,216,.3); }
+.badge-needs_attention { background: rgba(232,161,60,.16); color: var(--amber); border-color: rgba(232,161,60,.4); }
+.badge-pending_create { background: rgba(232,161,60,.14); color: var(--amber); border-color: rgba(232,161,60,.3); }
+.badge-deleted { background: var(--accent-soft); color: var(--accent-bright); border-color: rgba(229,72,77,.3); }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 table.data { width: 100%; border-collapse: collapse; min-width: 640px; }
 table.data th, table.data td { padding: 10px 12px; text-align: start; border-bottom: 1px solid var(--border); vertical-align: top; }

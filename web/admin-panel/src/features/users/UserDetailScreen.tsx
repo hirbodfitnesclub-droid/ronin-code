@@ -4,6 +4,7 @@ import { formatDate, formatDateTime, formatTokens } from '../../lib/format';
 import { navigate } from '../../lib/router';
 import { Card, ErrorBox, Field, OkBox, Spinner, errText } from '../../components/ui/primitives';
 import OrdersTable from '../orders/OrdersTable';
+import ProviderKeySection from './ProviderKeySection';
 import UserRiskDevices from './UserRiskDevices';
 
 interface Dossier {
@@ -194,6 +195,8 @@ export default function UserDetailScreen({ id, session }: { id: string; session:
             </div>
           )}
         </Card>
+
+        {canFinance ? <ProviderKeySection userId={id} session={session} /> : null}
 
         <Card title="دفتر کل توکن">
           {data.ledger.length === 0 ? (

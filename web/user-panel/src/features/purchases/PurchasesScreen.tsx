@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card, Chip, EmptyState, Spinner } from '../../components/ui';
 import { api, isApiError, type Claim } from '../../lib/api';
 import { ERROR_CODE_KEYS, useLang, type LangCtx } from '../../lib/i18n';
+import { claimReasonText, issuanceNoteKey } from './claimDisplay';
 import './purchases.css';
 
 function errorText(e: unknown, t: LangCtx['t']): string {
@@ -40,10 +41,8 @@ function StatusChip({ claim }: { claim: Claim }) {
 
 function ClaimRow({ claim }: { claim: Claim }) {
   const { t, fmtNum, fmtToman, fmtDate } = useLang();
-  /* The admin's human note is the user-visible reason; rejectReason may be a
-     machine code (e.g. receipt_unreadable) — never show raw codes to users. */
-  const rawReason = claim.adminNote ?? claim.rejectReason;
-  const reason = rawReason && !/^[a-z][a-z0-9_]*$/.test(rawReason) ? rawReason : t('purchases.rejectGeneric');
+  const reason = claimReasonText(claim, t('purchases.rejectGeneric'));
+  const issuanceKey = issuanceNoteKey(claim);
   return (
     <div className="purchases-row">
       <div className="purchases-row-main">
@@ -71,6 +70,15 @@ function ClaimRow({ claim }: { claim: Claim }) {
       {claim.status === 'pending' ? <div className="purchases-note">{t('purchases.pendingNote')}</div> : null}
       {claim.status === 'approved' && claim.reviewedAt ? (
         <div className="purchases-note">{fmtDate(claim.reviewedAt)}</div>
+      ) : null}
+      {/* Phase 2 (§7.2): issuance state of the provider key for this purchase.
+          needs_attention is shown as reassurance, never as an error. */}
+      {issuanceKey === 'purchases.issuanceConfirmed' ? (
+        <div className="purchases-note purchases-issuance-ok">{t(issuanceKey)}</div>
+      ) : null}
+      {issuanceKey === 'purchases.issuancePending' ? <div className="purchases-note">{t(issuanceKey)}</div> : null}
+      {issuanceKey === 'purchases.issuanceAttention' ? (
+        <div className="purchases-note purchases-issuance-attention">{t(issuanceKey)}</div>
       ) : null}
       {claim.status === 'rejected' ? (
         <div className="purchases-reject">

@@ -29,6 +29,7 @@ class ClaimsAdapter implements PanelApi {
   devices = () => this.live.devices();
   revokeDevice = (id: string) => this.live.revokeDevice(id);
   usageSummary = () => this.live.usageSummary();
+  recentUsage = () => this.live.recentUsage();
   issueHandoff = () => this.live.issueHandoff();
   listClaims = (): Promise<Claim[]> => (this.claimsLive ? this.live.listClaims() : this.mock.listClaims());
   createClaim = (packId: string, f: File): Promise<Claim> =>
