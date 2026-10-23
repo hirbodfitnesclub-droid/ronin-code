@@ -105,7 +105,7 @@ export const en = {
   'dashboard.keyStatus.deleted': 'Key removed',
   'dashboard.keyStatus.none': 'No key yet',
   'dashboard.keyIssued': 'Issued allowance: {count} tokens',
-  'dashboard.keyHint': 'Key {hint}',
+  'dashboard.keyLabel': 'Key',
   'dashboard.balanceStale': 'Balance may be slightly out of date.',
   'dashboard.balanceUnavailable': 'Balance unavailable right now — try again later.',
   'dashboard.partialNote':

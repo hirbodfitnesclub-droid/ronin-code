@@ -189,7 +189,9 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
               {t('dashboard.keyIssued', { count: fmtNum(providerKey.tokenLimitIssued) })}
             </span>
             {keyHint ? (
-              <span className="dash-key-hint ltr-island">{t('dashboard.keyHint', { hint: keyHint })}</span>
+              <span className="dash-key-hint">
+                {t('dashboard.keyLabel')} <span className="ltr-island">{keyHint}</span>
+              </span>
             ) : null}
           </div>
         ) : null}

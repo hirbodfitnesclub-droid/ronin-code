@@ -106,7 +106,7 @@ export const fa: Record<StringKey, string> = {
   'dashboard.keyStatus.deleted': 'کلید حذف شده',
   'dashboard.keyStatus.none': 'هنوز کلیدی نیست',
   'dashboard.keyIssued': 'سقف صادرشده: {count} توکن',
-  'dashboard.keyHint': 'کلید {hint}',
+  'dashboard.keyLabel': 'کلید',
   'dashboard.balanceStale': 'موجودی ممکنه کمی قدیمی باشه.',
   'dashboard.balanceUnavailable': 'موجودی الان در دسترس نیست — بعداً دوباره تلاش کن.',
   'dashboard.partialNote': 'بعضی روزها حد پایینیِ مصرفن: روزهای خیلی شلوغ فقط از روی تازه‌ترین درخواست‌ها خلاصه می‌شن.',
