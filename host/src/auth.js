@@ -190,10 +190,23 @@ export class AuthManager {
   }
 
   /** The stored delegated key (host-internal only — callers must never
-   *  log it or forward it to the GUI). Null in shared mode. */
+   *  log it or forward it to the GUI). Null in shared mode.
+   *  Corruption guard: a stored fingerprint that does not match the
+   *  stored key means the record was tampered with or half-written —
+   *  the key is dropped (never used, never "repaired" by falling back
+   *  to the session token) and the next ensure/fetch re-fetches it. */
   getSubscriptionKey() {
     const s = this.store.load();
-    return s?.subscriptionKey || null;
+    if (!s?.subscriptionKey) return null;
+    if (
+      s.subscriptionKeyFingerprint &&
+      s.subscriptionKeyFingerprint !== subscriptionKeyFingerprint(s.subscriptionKey)
+    ) {
+      log.warn("subscription_key_corrupt_cleared", {});
+      this._clearSubscriptionKey();
+      return null;
+    }
+    return s.subscriptionKey;
   }
 
   getSubscriptionKeyFingerprint() {

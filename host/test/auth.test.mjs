@@ -10,7 +10,12 @@ import assert from "node:assert/strict";
 
 process.env.RONIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-unit-auth-"));
 
-const { AuthManager, CredentialStore, AuthError } = await import("../src/auth.js");
+const { AuthManager, CredentialStore, AuthError, subscriptionKeyFingerprint } = await import("../src/auth.js");
+const { buildSubscriptionAttempt, classifyProxyError } = await import("../src/router.js");
+
+// Obvious fake delegated key — never a real value (design §12.3).
+const FAKE_KEY = "sk-ronin-FAKE-delegated-key-0001";
+const FAKE_KEY_ROTATED = "sk-ronin-FAKE-delegated-key-0002";
 
 const jwt = (expOffsetSec) =>
   `h.${Buffer.from(
@@ -36,8 +41,17 @@ function makeStubServer({ ttlSec = 3600 } = {}) {
     accountNetworkDown: false,
     failNextAccountStatus: 0,
     failAllAccountStatus: false,
+    // Phase 2 credential endpoint state (design §5.2).
+    credential: {
+      routingMode: "per_user",
+      keyStatus: "active",
+      delegatedKey: FAKE_KEY,
+      tokenLimitIssued: 20_000_000,
+    },
+    credentialHttpStatus: 200,
+    credentialError: "account_disabled",
   };
-  const calls = { refresh: [], verifyBodies: [], exchangeBodies: [], accountStatus: 0 };
+  const calls = { refresh: [], verifyBodies: [], exchangeBodies: [], accountStatus: 0, credential: 0 };
 
   function issue() {
     if (state.currentRefresh) state.rotatedOut.add(state.currentRefresh);
@@ -93,6 +107,24 @@ function makeStubServer({ ttlSec = 3600 } = {}) {
       const bearer = (opts.headers?.Authorization || "").replace("Bearer ", "");
       if (bearer !== state.currentAccess) return jsonRes(401, { error: "session_revoked" });
       return jsonRes(200, state.account);
+    }
+    if (pathname === "/api/subscription/credential") {
+      calls.credential += 1;
+      const bearer = (opts.headers?.Authorization || "").replace("Bearer ", "");
+      if (bearer !== state.currentAccess) return jsonRes(401, { error: "session_revoked" });
+      if (state.credentialHttpStatus !== 200) {
+        return jsonRes(state.credentialHttpStatus, { error: { code: state.credentialError } });
+      }
+      const c = state.credential;
+      if (c.routingMode === "shared") return jsonRes(200, { routingMode: "shared" });
+      const withKey = c.keyStatus === "active" || c.keyStatus === "needs_attention";
+      return jsonRes(200, {
+        routingMode: "per_user",
+        keyStatus: c.keyStatus,
+        tokenLimitIssued: c.tokenLimitIssued,
+        issuedAt: "2026-10-23T00:00:00.000Z",
+        ...(withKey && c.delegatedKey ? { delegatedKey: c.delegatedKey } : {}),
+      });
     }
     if (pathname === "/api/auth/logout") {
       if (state.logoutThrows) throw new TypeError("fetch failed");
@@ -299,6 +331,443 @@ test("auth: subscriptionLocked matrix", async () => {
     await manager.revalidate();
     assert.equal(manager.subscriptionLocked(), true);
   }
+});
+
+function perUserAccount(stub, { keyStatus = "active", limit = 20_000_000 } = {}) {
+  stub.state.account = {
+    ...stub.state.account,
+    routingMode: "per_user",
+    providerKey: { status: keyStatus, tokenLimitIssued: limit, balanceStale: false },
+  };
+  stub.state.credential = { ...stub.state.credential, keyStatus, tokenLimitIssued: limit };
+}
+
+// ---------------- Phase 2: delegated credential (design §5 / §12.3) ----------------
+
+test("credential store: subscriptionKey round-trips as a separate field at mode 0600", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-store-sub-"));
+  const file = path.join(dir, "credentials.json");
+  const store = new CredentialStore(file);
+  store.save({
+    accessToken: "a1",
+    refreshToken: "r1",
+    deviceId: "dev-1",
+    user: { id: "u1" },
+    serverUrl: "http://ronin.test",
+    subscriptionKey: FAKE_KEY,
+    subscriptionKeyFingerprint: subscriptionKeyFingerprint(FAKE_KEY),
+    subscriptionKeyStatus: "active",
+    routingMode: "per_user",
+  });
+  const loaded = store.load();
+  assert.equal(loaded.subscriptionKey, FAKE_KEY);
+  assert.equal(loaded.subscriptionKeyFingerprint, subscriptionKeyFingerprint(FAKE_KEY));
+  assert.equal(loaded.subscriptionKeyStatus, "active");
+  assert.equal(loaded.routingMode, "per_user");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // A save without the field clears it (no stale key survives).
+  store.save({ accessToken: "a1", refreshToken: "r1", deviceId: "dev-1", user: { id: "u1" }, serverUrl: "http://ronin.test" });
+  assert.equal(store.load().subscriptionKey, null);
+});
+
+test("credential: per-user login fetches and stores the delegated key; GUI state shows only the masked form", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(stub.calls.credential, 1);
+  const saved = store.load();
+  assert.equal(saved.subscriptionKey, FAKE_KEY);
+  assert.equal(saved.subscriptionKeyFingerprint, subscriptionKeyFingerprint(FAKE_KEY));
+  assert.equal(saved.subscriptionKeyStatus, "active");
+  assert.equal(manager.getSubscriptionKey(), FAKE_KEY);
+  assert.equal(manager.subscriptionRoutingMode(), "per_user");
+  const st = manager.state();
+  assert.equal(st.subscription.routingMode, "per_user");
+  assert.equal(st.subscription.providerKey.status, "active");
+  assert.equal(st.subscription.subscriptionKeyMasked, "••••" + FAKE_KEY.slice(-4));
+  assert.ok(!JSON.stringify(st).includes(FAKE_KEY), "raw key must never reach the GUI state");
+  // The delegated key lives only in credentials.json — never auth.json/config.json.
+  const dir = path.dirname(store.path);
+  for (const name of ["auth.json", "config.json"]) {
+    const p = path.join(dir, name);
+    if (fs.existsSync(p)) assert.ok(!fs.readFileSync(p, "utf8").includes(FAKE_KEY), `${name} must not contain the key`);
+  }
+});
+
+test("credential: shared mode never fetches and stores nothing (mixed-mode fallback)", async () => {
+  const stub = makeStubServer();
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(stub.calls.credential, 0);
+  assert.equal(store.load().subscriptionKey, null);
+  assert.equal(manager.subscriptionRoutingMode(), "shared");
+});
+
+test("credential: server reporting shared during a per-user session clears the key (rollback)", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+  stub.state.credential = { ...stub.state.credential, routingMode: "shared" };
+  const res = await manager.fetchSubscriptionCredential();
+  assert.equal(res.routingMode, "shared");
+  assert.equal(store.load().subscriptionKey, null);
+  assert.equal(manager.subscriptionRoutingMode(), "shared");
+});
+
+test("credential: rotation — a changed limit on revalidate re-fetches and replaces the key by fingerprint", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  const fpBefore = store.load().subscriptionKeyFingerprint;
+  // Provider rotates the key and the issued limit grows (top-up).
+  stub.state.credential = { ...stub.state.credential, delegatedKey: FAKE_KEY_ROTATED, tokenLimitIssued: 50_000_000 };
+  perUserAccount(stub, { limit: 50_000_000 });
+  await manager.revalidate();
+  assert.equal(store.load().subscriptionKey, FAKE_KEY_ROTATED);
+  assert.equal(store.load().subscriptionKeyFingerprint, subscriptionKeyFingerprint(FAKE_KEY_ROTATED));
+  assert.notEqual(store.load().subscriptionKeyFingerprint, fpBefore);
+});
+
+test("credential: frozen status withholds the key and clears the local copy", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+  perUserAccount(stub, { keyStatus: "frozen", limit: 99_000_000 });
+  stub.state.credential = { ...stub.state.credential, keyStatus: "frozen", tokenLimitIssued: 99_000_000 };
+  await manager.revalidate();
+  assert.equal(store.load().subscriptionKey, null);
+  assert.equal(manager.getSubscriptionKey(), null);
+});
+
+test("credential: keyStatus none clears the stored key on direct fetch", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  stub.state.credential = { ...stub.state.credential, keyStatus: "none", delegatedKey: null };
+  const res = await manager.fetchSubscriptionCredential();
+  assert.equal(res.keyStatus, "none");
+  assert.equal(store.load().subscriptionKey, null);
+});
+
+test("credential: account-disabled revalidation clears the stored key", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+  stub.state.account = { ...stub.state.account, status: "disabled", isActive: false };
+  await manager.revalidate();
+  assert.equal(store.load().subscriptionKey, null);
+  assert.equal(manager.subscriptionLocked(), true);
+});
+
+test("credential: a refused fetch (account_disabled) throws and clears the key", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  stub.state.credentialHttpStatus = 403;
+  await assert.rejects(manager.fetchSubscriptionCredential(), (e) => {
+    assert.ok(e instanceof AuthError);
+    assert.equal(e.code, "account_disabled");
+    return true;
+  });
+  assert.equal(store.load().subscriptionKey, null);
+});
+
+test("credential: ensureSubscriptionKey fetches exactly once when absent, then serves the store", async () => {
+  const stub = makeStubServer();
+  const { manager, store } = makeManager(stub);
+  // Seed a per-user session directly (no login-time fetch yet).
+  stub.state.currentRefresh = "rt-seed";
+  store.save({
+    accessToken: jwt(3600),
+    refreshToken: "rt-seed",
+    deviceId: "dev-1",
+    user: { id: "u1" },
+    serverUrl: "http://ronin.test",
+    routingMode: "per_user",
+  });
+  stub.state.currentAccess = store.load().accessToken;
+  // The stub validates the credential bearer against its current access.
+  const key = await manager.ensureSubscriptionKey();
+  assert.equal(key, FAKE_KEY);
+  assert.equal(stub.calls.credential, 1);
+  assert.equal(await manager.ensureSubscriptionKey(), FAKE_KEY);
+  assert.equal(stub.calls.credential, 1);
+});
+
+test("credential: account switch never carries the previous user's key; same-user refresh preserves it", async () => {
+  const stub = makeStubServer();
+  const { manager, store } = makeManager(stub);
+  store.save({
+    accessToken: jwt(3600),
+    refreshToken: "rt-a",
+    deviceId: "dev-1",
+    user: { id: "user-a" },
+    serverUrl: "http://ronin.test",
+    subscriptionKey: FAKE_KEY,
+    subscriptionKeyFingerprint: subscriptionKeyFingerprint(FAKE_KEY),
+    subscriptionKeyStatus: "active",
+    routingMode: "per_user",
+  });
+  manager._persistSession({ accessToken: jwt(3600), refreshToken: "rt-a2", user: { id: "user-a" } });
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+  manager._persistSession({ accessToken: jwt(3600), refreshToken: "rt-b", user: { id: "user-b" } });
+  assert.equal(store.load().subscriptionKey, null);
+  assert.equal(store.load().routingMode, null);
+});
+
+test("credential: logout clears the delegated key with the session", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+  await manager.logout();
+  assert.equal(store.load(), null);
+});
+
+// ---------------- subscription attempt routing (design §5.3 / §12.3) ----------------
+
+test("attempt: per-user mode uses the delegated key, shared mode the session token", async () => {
+  // Per-user.
+  {
+    const stub = makeStubServer();
+    perUserAccount(stub);
+    const { manager } = makeManager(stub);
+    await manager.exchangeCode("good-code");
+    const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+    assert.equal(attempt.apiKey, FAKE_KEY);
+    assert.equal(attempt.routingMode, "per_user");
+    assert.equal(attempt.baseUrl, "http://ronin.test/v1");
+    assert.notEqual(attempt.apiKey, stub.state.currentAccess);
+  }
+  // Shared (v1 regression lock).
+  {
+    const stub = makeStubServer();
+    const { manager } = makeManager(stub);
+    await manager.exchangeCode("good-code");
+    const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+    assert.equal(attempt.apiKey, stub.state.currentAccess);
+    assert.equal(attempt.routingMode, "shared");
+  }
+});
+
+test("attempt: missing per-user key triggers one credential fetch, then provider_key_not_ready while pending", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub, { keyStatus: "pending_create" });
+  stub.state.credential = { ...stub.state.credential, keyStatus: "pending_create", delegatedKey: null };
+  const { manager } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  const callsAfterLogin = stub.calls.credential;
+  await assert.rejects(buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" }), (e) => {
+    assert.equal(e.code, "provider_key_not_ready");
+    return true;
+  });
+  assert.equal(stub.calls.credential, callsAfterLogin + 1, "exactly one on-demand fetch");
+});
+
+test("attempt: a fetchable key is picked up on first subscription use", async () => {
+  const stub = makeStubServer();
+  const { manager, store } = makeManager(stub);
+  stub.state.currentRefresh = "rt-seed2";
+  store.save({
+    accessToken: jwt(3600),
+    refreshToken: "rt-seed2",
+    deviceId: "dev-1",
+    user: { id: "u1" },
+    serverUrl: "http://ronin.test",
+    routingMode: "per_user",
+  });
+  stub.state.currentAccess = store.load().accessToken;
+  const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(attempt.apiKey, FAKE_KEY);
+  assert.equal(stub.calls.credential, 1);
+});
+
+// ---------------- proxy error classification (design §6.4) ----------------
+
+test("classify: account_suspended maps to the suspended kind, never model_disabled", () => {
+  assert.equal(classifyProxyError("403 account_suspended"), "account_suspended");
+  assert.equal(classifyProxyError('{"error":{"code":"account_suspended"}}'), "account_suspended");
+  assert.equal(classifyProxyError("403 model_disabled"), "model_disabled");
+  assert.equal(classifyProxyError("Request failed with status 403"), "model_disabled");
+  assert.equal(classifyProxyError("402 insufficient_credit"), "insufficient_credit");
+  assert.equal(classifyProxyError("502 provider_key_invalid"), "provider_key_invalid");
+  assert.equal(classifyProxyError("503 provider_key_not_ready"), "provider_key_not_ready");
+  assert.equal(classifyProxyError("502 provider_forbidden"), "provider_forbidden");
+  assert.equal(classifyProxyError("401 session_revoked"), "unauthorized");
+});
+
+// ---------------- HARD: security — corruption, leakage, no session-token fallback ----------------
+
+test("hard-sec: fingerprint-mismatched stored key is treated as corrupt — dropped and cleanly re-fetched", async () => {
+  const stub = makeStubServer();
+  const { manager, store } = makeManager(stub);
+  stub.state.currentRefresh = "rt-corrupt";
+  store.save({
+    accessToken: jwt(3600),
+    refreshToken: "rt-corrupt",
+    deviceId: "dev-1",
+    user: { id: "u1" },
+    serverUrl: "http://ronin.test",
+    subscriptionKey: "sk-ronin-FAKE-tampered-9999",
+    subscriptionKeyFingerprint: subscriptionKeyFingerprint("sk-ronin-FAKE-some-other-key"),
+    subscriptionKeyStatus: "active",
+    routingMode: "per_user",
+  });
+  stub.state.currentAccess = store.load().accessToken;
+  assert.equal(manager.getSubscriptionKey(), null, "corrupt key must never be handed out");
+  const healed = await manager.ensureSubscriptionKey();
+  assert.equal(healed, FAKE_KEY);
+  assert.equal(store.load().subscriptionKeyFingerprint, subscriptionKeyFingerprint(FAKE_KEY));
+});
+
+test("hard-sec: non-string / malformed credential fields are sanitised, never crash, never leak into attempts", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-corrupt-"));
+  const file = path.join(dir, "credentials.json");
+  // Hand-write a damaged record: key of the wrong type, junk fingerprint.
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      accessToken: jwt(3600),
+      refreshToken: "rt-malformed",
+      deviceId: "dev-1",
+      user: { id: "u1" },
+      serverUrl: "http://ronin.test",
+      subscriptionKey: 123456789,
+      subscriptionKeyFingerprint: { evil: true },
+      routingMode: "per_user",
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  const stub = makeStubServer();
+  stub.state.currentAccess = JSON.parse(fs.readFileSync(file, "utf8")).accessToken;
+  stub.state.currentRefresh = "rt-malformed";
+  const store = new CredentialStore(file);
+  assert.equal(store.load().subscriptionKey, null);
+  const manager = new AuthManager({ store, fetchFn: stub.fetchFn, serverUrl: "http://ronin.test", panelUrl: "http://panel.test", deviceName: "T" });
+  const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(attempt.apiKey, FAKE_KEY, "clean re-fetch heals the attempt");
+  assert.notEqual(attempt.apiKey, store.load().accessToken);
+});
+
+test("hard-sec: fully corrupted credentials file (invalid JSON) loads as no-session, no crash", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-corrupt2-"));
+  const file = path.join(dir, "credentials.json");
+  fs.writeFileSync(file, "{not json!! subscriptionKey: sk-ronin-FAKE", { mode: 0o600 });
+  const store = new CredentialStore(file);
+  assert.equal(store.load(), null);
+  const manager = new AuthManager({ store, fetchFn: async () => { throw new Error("unused"); }, serverUrl: "http://ronin.test" });
+  assert.equal(manager.state().loggedIn, false);
+  assert.equal(manager.subscriptionLocked(), true);
+  assert.equal(manager.getSubscriptionKey(), null);
+});
+
+test("hard-sec: per-user mode NEVER falls back to the session token when no key can be fetched", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub, { keyStatus: "none" });
+  stub.state.credential = { ...stub.state.credential, keyStatus: "none", delegatedKey: null };
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().subscriptionKey, null);
+  await assert.rejects(buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" }), (e) => {
+    assert.equal(e.code, "provider_key_not_ready");
+    return true;
+  });
+  // Direct resolver check: the session token is never substituted.
+  const { SUBSCRIPTION_PROVIDER } = await import("../src/router.js");
+  assert.equal(await SUBSCRIPTION_PROVIDER.resolveApiKey(manager), null);
+});
+
+test("hard-sec: the delegated key never appears in host log lines or credential return values", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager } = makeManager(stub);
+  const lines = [];
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  console.log = (...a) => lines.push(a.join(" "));
+  console.warn = (...a) => lines.push(a.join(" "));
+  console.error = (...a) => lines.push(a.join(" "));
+  let summary;
+  try {
+    await manager.exchangeCode("good-code");
+    summary = await manager.fetchSubscriptionCredential();
+    await manager.revalidate();
+  } finally {
+    console.log = orig.log; console.warn = orig.warn; console.error = orig.error;
+  }
+  assert.ok(lines.length > 0, "expected some log lines to inspect");
+  for (const line of lines) assert.ok(!line.includes(FAKE_KEY), "log line leaked the delegated key");
+  assert.ok(!JSON.stringify(summary).includes(FAKE_KEY), "credential summary leaked the key");
+  assert.ok(!JSON.stringify(manager.state()).includes(FAKE_KEY), "GUI state leaked the key");
+});
+
+// ---------------- HARD: idempotency — duplicate fetches / logins, rotation signal ----------------
+
+test("hard-idem: concurrent credential fetches are deduped to one server call and one stored key", async () => {
+  const stub = makeStubServer();
+  const { manager, store } = makeManager(stub);
+  stub.state.currentRefresh = "rt-dedupe";
+  store.save({
+    accessToken: jwt(3600),
+    refreshToken: "rt-dedupe",
+    deviceId: "dev-1",
+    user: { id: "u1" },
+    serverUrl: "http://ronin.test",
+    routingMode: "per_user",
+  });
+  stub.state.currentAccess = store.load().accessToken;
+  const [a, b, c] = await Promise.all([
+    manager.fetchSubscriptionCredential(),
+    manager.fetchSubscriptionCredential(),
+    manager.fetchSubscriptionCredential(),
+  ]);
+  assert.equal(stub.calls.credential, 1);
+  assert.deepEqual(a, b);
+  assert.deepEqual(b, c);
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+});
+
+test("hard-idem: double login does not re-fetch or corrupt the stored key; concurrent revalidates dedupe", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  await manager.exchangeCode("good-code");
+  assert.equal(stub.calls.credential, 1, "second login with unchanged key state must not re-fetch");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+  assert.equal(store.load().subscriptionKeyFingerprint, subscriptionKeyFingerprint(FAKE_KEY));
+  const statusCalls = stub.calls.accountStatus;
+  await Promise.all([manager.revalidate(), manager.revalidate(), manager.revalidate()]);
+  assert.equal(stub.calls.accountStatus, statusCalls + 1, "concurrent revalidates share one request");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+});
+
+test("hard-idem: stale key is replaced on the re-fetch signal after a server-side rotation", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY);
+  // Server rotates; the design's re-fetch signal (§5.2c) is an explicit refresh.
+  stub.state.credential = { ...stub.state.credential, delegatedKey: FAKE_KEY_ROTATED };
+  const before = stub.calls.credential;
+  const summary = await manager.refreshSubscriptionCredential();
+  assert.equal(stub.calls.credential, before + 1);
+  assert.equal(summary.keyStatus, "active");
+  assert.equal(store.load().subscriptionKey, FAKE_KEY_ROTATED);
+  assert.equal(store.load().subscriptionKeyFingerprint, subscriptionKeyFingerprint(FAKE_KEY_ROTATED));
+  const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(attempt.apiKey, FAKE_KEY_ROTATED);
 });
 
 // ---------------- logout ----------------

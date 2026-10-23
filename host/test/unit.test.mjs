@@ -16,7 +16,8 @@ process.env.RONIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-unit-"));
 const { unifiedDiff } = await import("../src/diff.js");
 const { compressToolText, pickKey, isFailoverError } = await import("../src/router.js");
 const { priceTurn } = await import("../src/cost.js");
-const { redactSecrets, redactKnownSecrets, isEnvPath } = await import("../src/guard.js");
+const { redactSecrets, redactKnownSecrets, isEnvPath, collectSecretValues } = await import("../src/guard.js");
+const { classifyProxyError } = await import("../src/router.js");
 const { recordKeyUse } = await import("../src/usage.js");
 const { buildZip } = await import("../src/publish.js");
 
@@ -132,6 +133,27 @@ test("redact: known secret values are masked wherever they appear", () => {
 
 test("redact: ordinary text is untouched", () => {
   assert.equal(redactSecrets("const x = 42; // hello"), "const x = 42; // hello");
+});
+
+test("redact: the delegated subscription key is a collected secret value (phase 2)", () => {
+  const credPath = path.join(process.env.RONIN_HOME, "credentials.json");
+  fs.writeFileSync(credPath, JSON.stringify({ subscriptionKey: "sk-ronin-FAKE-collect-0001" }) + "\n", { mode: 0o600 });
+  try {
+    const vals = collectSecretValues();
+    assert.ok(vals.includes("sk-ronin-FAKE-collect-0001"));
+    const out = redactKnownSecrets("leaked sk-ronin-FAKE-collect-0001 here", vals);
+    assert.ok(!out.includes("sk-ronin-FAKE-collect-0001"));
+  } finally {
+    fs.rmSync(credPath, { force: true });
+  }
+});
+
+// ---------------- proxy error classification (design §6.4) ----------------
+
+test("classify: suspended beats the generic 403 fallback", () => {
+  assert.equal(classifyProxyError("403 account_suspended"), "account_suspended");
+  assert.equal(classifyProxyError("403"), "model_disabled");
+  assert.equal(classifyProxyError("402 Payment Required"), "insufficient_credit");
 });
 
 // ---------------- .env detection ----------------
