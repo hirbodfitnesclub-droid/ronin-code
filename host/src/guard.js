@@ -6,6 +6,8 @@
 import path from "node:path";
 import crypto from "node:crypto";
 import { config, getProject, loadAuth, keyList } from "./config.js";
+import { CREDENTIALS_PATH } from "./paths.js";
+import { readJsonFile } from "./util.js";
 import { broadcast } from "./sse.js";
 import { compressToolText } from "./router.js";
 
@@ -33,6 +35,16 @@ export function collectSecretValues() {
   const vals = new Set();
   const auth = loadAuth();
   for (const v of Object.values(auth)) for (const k of keyList(v)) if (k.length >= 8) vals.add(k);
+  // Phase 2: the delegated subscription key is a spendable secret too —
+  // if it ever appears in tool output it must be redacted like any key.
+  // Read the credential record directly (no AuthManager import cycle);
+  // the value is used only as a redaction needle, never logged.
+  try {
+    const creds = readJsonFile(CREDENTIALS_PATH, null);
+    if (creds && typeof creds.subscriptionKey === "string" && creds.subscriptionKey.length >= 8) {
+      vals.add(creds.subscriptionKey);
+    }
+  } catch {}
   return [...vals];
 }
 

@@ -296,48 +296,102 @@ export async function runLiveTurn(prompt, project, manifest, { autoMode, onProgr
 }
 
 /**
- * One subscription turn through the Ronin metering proxy. Single
- * attempt (no BYOK failover chain — the proxy is the only route), with
- * proxy failures mapped to stable turn_error codes by the caller:
- * 402 → 'insufficient_credit', 401 → one forced revalidate, then
- * 'login_required' if the session was cleared.
+ * One subscription turn through the Ronin relay. Single route (no BYOK
+ * failover chain), with relay failures mapped to stable turn_error
+ * codes by the caller (design §6.4):
+ *  402 → 'insufficient_credit' (existing credit banner);
+ *  relay 403 `account_suspended` → 'subscription_locked' (existing
+ *  locked banner — never 'model_disabled');
+ *  key-shaped failures (401 / `provider_key_invalid`) → ONE credential
+ *  re-fetch (§5.2c) and, when it yields a different key and nothing
+ *  user-visible has streamed yet, ONE retry — the stale-key self-heal
+ *  of §10 row 15. After that, the v1 session path applies: one forced
+ *  revalidate, then 'login_required' if the session was cleared.
  */
 export async function runSubscriptionLive(prompt, project, manifest, { authManager, modelId, effort, fast, autoMode } = {}) {
-  const attempt = await buildSubscriptionAttempt(authManager, { modelId, effort, fast });
-  const state = { visible: false };
-  try {
-    const r = await runLiveAttempt({ prompt, ...attempt, project, manifest, autoMode, state });
-    // apiKey is the session token — never feed it to per-key stats.
-    finalizeTurnUsage({ providerId: attempt.providerId, modelId: attempt.modelId, apiKey: null, usage: r.usage, promptText: prompt, replyText: r.finalText });
-    broadcast({ type: "assistant_message", text: r.finalText });
-    broadcast({ type: "changes", files: r.changes });
-    lastTurnDiff = { project, manifest, changes: r.changes };
-    broadcast({ type: "turn_done" });
-    return;
-  } catch (e) {
-    const msg = cleanError(e);
-    finalizeTurnUsage({ providerId: attempt.providerId, modelId: attempt.modelId, apiKey: null, usage: null, promptText: prompt, replyText: "", error: msg });
-    const kind = classifyProxyError(msg) || (e && e.code === "login_required" ? "login_required" : null);
-    if (kind === "insufficient_credit") {
-      const err = new Error("Your Ronin credit has run out. Buy a credit pack to keep going.");
-      err.code = "insufficient_credit";
-      throw err;
-    }
-    if (kind === "model_disabled") {
-      const err = new Error("That model is not available on your subscription right now.");
-      err.code = "model_disabled";
-      throw err;
-    }
-    if (kind === "unauthorized" || kind === "login_required") {
-      await authManager.revalidate();
-      if (!authManager.state().loggedIn) {
-        const err = new Error("Your Ronin session has ended. Please sign in again.");
-        err.code = "login_required";
+  let retriedAfterRefetch = false;
+  for (;;) {
+    const attempt = await buildSubscriptionAttempt(authManager, { modelId, effort, fast });
+    const state = { visible: false };
+    try {
+      const r = await runLiveAttempt({ prompt, ...attempt, project, manifest, autoMode, state });
+      // apiKey is a session token (shared) or the delegated key
+      // (per-user) — either way never feed it to per-key stats.
+      finalizeTurnUsage({ providerId: attempt.providerId, modelId: attempt.modelId, apiKey: null, usage: r.usage, promptText: prompt, replyText: r.finalText });
+      broadcast({ type: "assistant_message", text: r.finalText });
+      broadcast({ type: "changes", files: r.changes });
+      lastTurnDiff = { project, manifest, changes: r.changes };
+      broadcast({ type: "turn_done" });
+      return;
+    } catch (e) {
+      const msg = cleanError(e);
+      finalizeTurnUsage({ providerId: attempt.providerId, modelId: attempt.modelId, apiKey: null, usage: null, promptText: prompt, replyText: "", error: msg });
+      const kind =
+        classifyProxyError(msg) ||
+        (e && typeof e.code === "string" ? e.code : null);
+      if (kind === "insufficient_credit") {
+        const err = new Error("Your Ronin credit has run out. Buy a credit pack to keep going.");
+        err.code = "insufficient_credit";
         throw err;
+      }
+      if (kind === "account_suspended") {
+        // Refresh the cached account state (which also drops the
+        // stored key when the account is disabled) and surface the
+        // existing locked state.
+        try { await authManager.revalidate(); } catch {}
+        const err = new Error("Your Ronin account is currently suspended.");
+        err.code = "subscription_locked";
+        throw err;
+      }
+      if (kind === "model_disabled") {
+        const err = new Error("That model is not available on your subscription right now.");
+        err.code = "model_disabled";
+        throw err;
+      }
+      if (kind === "provider_key_not_ready") {
+        const err = new Error("Your subscription key is still being set up. Please try again in a moment.");
+        err.code = "provider_key_not_ready";
+        throw err;
+      }
+      const keyShaped = kind === "unauthorized" || kind === "provider_key_invalid";
+      if (keyShaped && !retriedAfterRefetch && !state.visible) {
+        retriedAfterRefetch = true;
+        // §5.2(c): re-fetch the credential on a key-shaped signal. In
+        // per-user mode a rotated/replacement key heals the turn; in
+        // shared mode there is no credential to fetch and the session
+        // path below applies instead.
+        let healed = false;
+        if (
+          attempt.routingMode === "per_user" &&
+          typeof authManager.refreshSubscriptionCredential === "function"
+        ) {
+          const before = typeof authManager.getSubscriptionKeyFingerprint === "function"
+            ? authManager.getSubscriptionKeyFingerprint()
+            : null;
+          try { await authManager.refreshSubscriptionCredential(); } catch {}
+          const after = typeof authManager.getSubscriptionKeyFingerprint === "function"
+            ? authManager.getSubscriptionKeyFingerprint()
+            : null;
+          healed = Boolean(after) && after !== before;
+          if (!healed && kind === "provider_key_invalid") {
+            // §6.4: an invalid key with no replacement is a generic
+            // turn error (human first) — not a login failure.
+            throw e;
+          }
+        }
+        if (healed) continue;
+      }
+      if (kind === "unauthorized" || kind === "login_required") {
+        await authManager.revalidate();
+        if (!authManager.state().loggedIn) {
+          const err = new Error("Your Ronin session has ended. Please sign in again.");
+          err.code = "login_required";
+          throw err;
+        }
+        throw e;
       }
       throw e;
     }
-    throw e;
   }
 }
 
