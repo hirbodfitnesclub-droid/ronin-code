@@ -56,6 +56,12 @@ export interface AuthUser {
   name: string | null;
 }
 
+export interface ProviderKeyInfo {
+  status: string | null;
+  tokenLimitIssued: number | null;
+  balanceStale: boolean;
+}
+
 export interface SubscriptionInfo {
   status: string;
   balanceTokens: number;
@@ -63,6 +69,12 @@ export interface SubscriptionInfo {
   deviceAuthorized: boolean;
   checkedAt: string;
   stale: boolean;
+  /** Phase 2 (§11): server-told routing mode; absent on older hosts = shared. */
+  routingMode?: 'shared' | 'per_user';
+  providerKey?: ProviderKeyInfo | null;
+  /** Masked delegated key only (•••• + last 4) — the raw key never reaches the GUI. */
+  subscriptionKeyMasked?: string | null;
+  subscriptionKeyStatus?: string | null;
 }
 
 export interface AuthState {

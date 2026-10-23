@@ -117,6 +117,8 @@ export const fa: Record<StringKey, string> = {
   'settings.apiKeyPlaceholder': 'کلید API رو بچسبون',
   'settings.keepKey': '{masked} — خالی بذار تا بمونه',
   'settings.keysHint': 'کلیدها فقط روی همین دستگاه می‌مونن — هیچ‌جا فرستاده نمی‌شن.',
+  'settings.subscriptionKey': 'کلید اشتراک',
+  'settings.subscriptionKeyHint': 'توسط حساب رونینت مدیریت می‌شه — فقط به‌صورت پوشیده نشون داده می‌شه، چیزی برای کپی یا چسبوندن نیست.',
   'settings.model': 'مدل',
   'settings.modelHint': 'با پیش‌فرض ارائه‌دهنده پر شده — برای مدل سفارشی ویرایشش کن.',
   'settings.modelPlaceholder': 'شناسه‌ی مدل',

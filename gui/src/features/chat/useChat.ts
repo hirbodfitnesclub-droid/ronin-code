@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, openStream, type ActivityKind, type ChangedFile, type StreamEvent } from '../../lib/api';
+import { bannerForTurnError } from '../../lib/turnErrors';
 import { defaultEffort, hasFast, modelById, pickerEfforts } from '../../lib/models';
 import type { StringKey } from '../../lib/i18n';
 import type { TimelineItem } from './types';
@@ -249,20 +250,23 @@ export function useChat(opts: ChatOptions) {
         case 'turn_done':
           finishTurn();
           break;
-        case 'turn_error':
+        case 'turn_error': {
           if (ev.code === 'login_required') {
             finishTurn();
             opts.onLoginRequired();
-          } else if (ev.code === 'insufficient_credit') {
-            setBanner('credit');
-            finishTurn();
-          } else if (ev.code === 'subscription_locked') {
-            setBanner('locked');
+            break;
+          }
+          /* Existing banners only: 402 -> credit, locked/suspended ->
+             locked (lib/turnErrors). No visual redesign. */
+          const banner = bannerForTurnError(ev.code);
+          if (banner) {
+            setBanner(banner);
             finishTurn();
           } else {
             finishTurn(ev.message || opts.t('app.genericTurnError'));
           }
           break;
+        }
       }
     };
 

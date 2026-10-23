@@ -245,6 +245,20 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
           <span className="field-hint">{t('settings.modelHint')}</span>
         </label>
 
+        {status?.auth?.subscription?.routingMode === 'per_user' &&
+          status.auth.subscription.subscriptionKeyMasked && (
+            <div className="settings-section">
+              <h3>{t('settings.subscriptionKey')}</h3>
+              <span className="field-hint">
+                <span dir="ltr">{status.auth.subscription.subscriptionKeyMasked}</span>
+                {status.auth.subscription.subscriptionKeyStatus
+                  ? ` · ${status.auth.subscription.subscriptionKeyStatus}`
+                  : ''}
+              </span>
+              <span className="field-hint">{t('settings.subscriptionKeyHint')}</span>
+            </div>
+          )}
+
         <div className="settings-section">
           <h3>{t('settings.models.title')}</h3>
           <span className="field-hint">{t('settings.models.hint')}</span>

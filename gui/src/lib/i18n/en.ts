@@ -116,6 +116,8 @@ export const en = {
   'settings.apiKeyPlaceholder': 'Paste your API key',
   'settings.keepKey': '{masked} — leave blank to keep',
   'settings.keysHint': 'Keys stay on this machine only — never sent anywhere else.',
+  'settings.subscriptionKey': 'Subscription key',
+  'settings.subscriptionKeyHint': 'Managed by your Ronin account — shown masked only, nothing to copy or paste.',
   'settings.model': 'Model',
   'settings.modelHint': 'Prefilled with the provider default — edit for a custom model id.',
   'settings.modelPlaceholder': 'Model id',
