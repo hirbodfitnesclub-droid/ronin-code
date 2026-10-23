@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Device, type RiskFlag } from '../../lib/api';
-import { isProviderRiskKind, riskKindLabel } from '../../lib/providerKey';
+import { riskFlagDisplay } from '../../lib/providerKey';
 import { formatDateTime } from '../../lib/format';
 import { Card, ErrorBox, Field, OkBox, StatusBadge, errText } from '../../components/ui/primitives';
 
@@ -129,16 +129,18 @@ export default function UserRiskDevices({ userId }: { userId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {flags.map((f) => (
+                  {flags.map((f) => {
+                    const disp = riskFlagDisplay(f);
+                    return (
                     <tr key={f.id}>
                       <td>
-                        {isProviderRiskKind(f.kind) && f.status === 'open' ? (
-                          <span className="badge badge-warn">{riskKindLabel(f.kind)}</span>
+                        {disp.warn ? (
+                          <span className="badge badge-warn">{disp.label}</span>
                         ) : (
-                          riskKindLabel(f.kind)
+                          disp.label
                         )}
                       </td>
-                      <td>{f.note ?? '—'}</td>
+                      <td>{disp.note}</td>
                       <td>
                         <StatusBadge status={f.status} />
                       </td>
@@ -151,7 +153,8 @@ export default function UserRiskDevices({ userId }: { userId: string }) {
                         ) : null}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

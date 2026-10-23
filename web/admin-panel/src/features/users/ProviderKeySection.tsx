@@ -1,26 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, hasCap, type Session } from '../../lib/api';
 import {
-  PROVIDER_INTENT_KIND_FA,
-  PROVIDER_INTENT_STATE_FA,
-  PROVIDER_KEY_STATUS_FA,
   RESOLVE_DECISION_FA,
-  canFreeze,
-  canUnfreeze,
-  maskedProviderKey,
-  remainingObserved,
-  resolveDecisionsFor,
-  type ProviderIntent,
+  buildProviderKeyView,
+  classifyProviderKeyError,
   type ProviderKeyDetail,
   type ResolveDecision,
 } from '../../lib/providerKey';
-import { formatDateTime, formatTokens } from '../../lib/format';
+import { formatTokens } from '../../lib/format';
 import { Card, ErrorBox, OkBox, Spinner, errText } from '../../components/ui/primitives';
 
 /* Phase 2 — per-user provider key card in the user dossier (§7.4).
    Reads are cap finance_user; freeze/unfreeze cap risk_manage (intent-based,
    confirmation via the existing window.confirm pattern); needs_attention
-   resolution is owner-only (§3.5). The key itself is never shown — last-4 only. */
+   resolution is owner-only (§3.5). ALL display strings come from
+   buildProviderKeyView — the component never renders raw key fields, and a
+   403 (another user's data) lands in the standard error state, never a
+   partial render (§IDOR battery). */
 export default function ProviderKeySection({ userId, session }: { userId: string; session: Session }) {
   const [detail, setDetail] = useState<ProviderKeyDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -36,13 +32,16 @@ export default function ProviderKeySection({ userId, session }: { userId: string
       const r = await api.providerKey(userId);
       setDetail(r.providerKey);
       setNotFound(false);
+      setError('');
     } catch (e) {
-      const err = e as { status?: number; code?: string };
-      if (err.status === 404 || err.code === 'not_found') {
+      if (classifyProviderKeyError(e) === 'not_found') {
         // Shared-mode user (or key never issued): a legitimate empty state.
         setNotFound(true);
         setDetail(null);
       } else {
+        // 403/401/5xx/network: standard error state, no partial data bleed.
+        setDetail(null);
+        setNotFound(false);
         setError(errText(e));
       }
     }
@@ -96,13 +95,13 @@ export default function ProviderKeySection({ userId, session }: { userId: string
     }
   }
 
-  async function resolve(intent: ProviderIntent, decision: ResolveDecision) {
+  async function resolve(intentId: string, decision: ResolveDecision) {
     const label = RESOLVE_DECISION_FA[decision];
-    if (!window.confirm(`تصمیم «${label}» برای intent شماره ${intent.id} ثبت شود؟ این اقدام در ممیزی ثبت می‌شود.`)) return;
+    if (!window.confirm(`تصمیم «${label}» برای intent شماره ${intentId} ثبت شود؟ این اقدام در ممیزی ثبت می‌شود.`)) return;
     setBusy(true);
     setError('');
     try {
-      await api.resolveProviderIntent(intent.id, decision);
+      await api.resolveProviderIntent(intentId, decision);
       setOk(`تصمیم «${label}» ثبت شد.`);
       await load();
     } catch (e) {
@@ -113,12 +112,13 @@ export default function ProviderKeySection({ userId, session }: { userId: string
   }
 
   if (!detail && !notFound && !error) return <Spinner />;
+  const view = detail && detail.exists ? buildProviderKeyView(detail) : null;
 
   return (
     <Card
       title="کلید ارائه‌دهنده (Phase 2)"
       actions={
-        detail && detail.exists ? (
+        view ? (
           <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void refresh()}>
             تازه‌سازی از ارائه‌دهنده
           </button>
@@ -127,41 +127,32 @@ export default function ProviderKeySection({ userId, session }: { userId: string
     >
       <ErrorBox message={error} />
       <OkBox message={ok} />
-      {notFound || !detail || !detail.exists ? (
-        <p className="dim">برای این کاربر کلید ارائه‌دهنده‌ای صادر نشده است (حالت اشتراکی یا هنوز خرید تأییدشده‌ای ندارد).</p>
+      {!view ? (
+        error ? null : (
+          <p className="dim">برای این کاربر کلید ارائه‌دهنده‌ای صادر نشده است (حالت اشتراکی یا هنوز خرید تأییدشده‌ای ندارد).</p>
+        )
       ) : (
         <>
-          {detail.attentionIntents.length > 0 ? (
+          {view.attention.length > 0 ? (
             <div className="alert" role="alert" style={{ marginBottom: 14 }} data-testid="provider-attention-banner">
-              <strong>نیازمند بررسی ({formatTokens(detail.attentionIntents.length)} مورد):</strong>
-              {detail.attentionIntents.map((intent) => (
-                <div key={intent.id} style={{ marginTop: 10 }}>
-                  <div>
-                    {PROVIDER_INTENT_KIND_FA[intent.kind] ?? intent.kind}
-                    {intent.amountTokens ? ` — ${formatTokens(intent.amountTokens)} توکن` : ''} · از{' '}
-                    {formatDateTime(intent.createdAt)} · تلاش‌ها: {formatTokens(intent.attemptCount)}
-                    {intent.providerErrorCode ? (
-                      <>
-                        {' '}
-                        · کد ارائه‌دهنده: <span className="ltr mono">{intent.providerErrorCode}</span>
-                      </>
-                    ) : null}
-                  </div>
-                  {intent.kind === 'topup' && (intent.balanceBefore !== null || intent.usedBefore !== null) ? (
+              <strong>نیازمند بررسی ({formatTokens(view.attention.length)} مورد):</strong>
+              {view.attention.map((a) => (
+                <div key={a.intentId} style={{ marginTop: 10 }}>
+                  <div>{a.headline}</div>
+                  {a.evidence ? (
                     <div className="small dim" style={{ marginTop: 4 }}>
-                      شواهد موجودی — قبل از ارسال: موجودی {formatTokens(intent.balanceBefore)} · مصرف{' '}
-                      {formatTokens(intent.usedBefore)} · موجودی فعلی مشاهده‌شده: {formatTokens(detail.balanceObserved)}
+                      {a.evidence}
                     </div>
                   ) : null}
                   {isOwner ? (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                      {resolveDecisionsFor(intent).map((decision) => (
+                      {a.decisions.map((decision) => (
                         <button
                           key={decision}
                           type="button"
                           className={`btn btn-sm ${decision === 'abandon' ? 'btn-danger' : ''}`}
                           disabled={busy}
-                          onClick={() => void resolve(intent, decision)}
+                          onClick={() => void resolve(a.intentId, decision)}
                         >
                           {RESOLVE_DECISION_FA[decision]}
                         </button>
@@ -180,51 +171,36 @@ export default function ProviderKeySection({ userId, session }: { userId: string
           <dl className="kv">
             <dt>وضعیت کلید</dt>
             <dd>
-              <span className={`badge badge-${detail.status}`}>{PROVIDER_KEY_STATUS_FA[detail.status] ?? detail.status}</span>
+              <span className={`badge badge-${detail!.status}`}>{view.statusLabel}</span>
             </dd>
             <dt>کلید (ماسک‌شده)</dt>
-            <dd className="ltr mono">{maskedProviderKey(detail.keyLast4)}</dd>
-            <dt>سقف صادرشده</dt>
-            <dd>{formatTokens(detail.tokenLimitIssued)} توکن</dd>
-            <dt>مصرف مشاهده‌شده</dt>
-            <dd>{formatTokens(detail.tokensUsedObserved)} توکن</dd>
-            <dt>باقی‌مانده مشاهده‌شده</dt>
-            <dd>{formatTokens(remainingObserved(detail))} توکن</dd>
-            <dt>موجودی ارائه‌دهنده</dt>
-            <dd>
-              {formatTokens(detail.balanceObserved)} توکن
-              {detail.balanceObservedAt ? (
-                <span className="small faint"> — {formatDateTime(detail.balanceObservedAt)}</span>
-              ) : null}
-              {detail.balanceStale ? <span className="badge badge-warn" style={{ marginInlineStart: 8 }}>قدیمی</span> : null}
-            </dd>
-            {detail.convertedAt ? (
-              <>
-                <dt>تبدیل از نسخه ۱</dt>
+            <dd className="ltr mono">{view.maskedKey}</dd>
+            {view.kv.map((row) => (
+              <div key={row.label} style={{ display: 'contents' }}>
+                <dt>{row.label}</dt>
                 <dd>
-                  {formatTokens(detail.convertedTokens)} توکن — {formatDateTime(detail.convertedAt)}
+                  {row.value}
+                  {row.label === 'موجودی ارائه‌دهنده' && view.balanceStale ? (
+                    <span className="badge badge-warn" style={{ marginInlineStart: 8 }}>قدیمی</span>
+                  ) : null}
                 </dd>
-              </>
-            ) : null}
-            <dt>پرچم انحراف باز</dt>
-            <dd>{formatTokens(detail.openDriftFlags)}</dd>
-            <dt>آخرین تطبیق</dt>
-            <dd>{formatDateTime(detail.lastReconciledAt)}</dd>
+              </div>
+            ))}
           </dl>
 
           {canRisk ? (
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              <button type="button" className="btn btn-danger" disabled={busy || !canFreeze(detail)} onClick={() => void freeze()}>
+              <button type="button" className="btn btn-danger" disabled={busy || !view.canFreeze} onClick={() => void freeze()}>
                 فریز کلید
               </button>
-              <button type="button" className="btn btn-primary" disabled={busy || !canUnfreeze(detail)} onClick={() => void unfreeze()}>
+              <button type="button" className="btn btn-primary" disabled={busy || !view.canUnfreeze} onClick={() => void unfreeze()}>
                 رفع فریز کلید
               </button>
             </div>
           ) : null}
 
           <h3 style={{ marginTop: 20, marginBottom: 10 }}>تاریخچه شارژ و صدور (از پایگاه داده ما)</h3>
-          {detail.intents.length === 0 ? (
+          {view.intentRows.length === 0 ? (
             <p className="dim">رکوردی ثبت نشده است.</p>
           ) : (
             <div className="table-wrap">
@@ -240,18 +216,16 @@ export default function ProviderKeySection({ userId, session }: { userId: string
                   </tr>
                 </thead>
                 <tbody>
-                  {detail.intents.map((i) => (
+                  {view.intentRows.map((i) => (
                     <tr key={i.id}>
-                      <td>{PROVIDER_INTENT_KIND_FA[i.kind] ?? i.kind}</td>
+                      <td>{i.kindLabel}</td>
                       <td className="small mono">{i.source}</td>
-                      <td>{i.amountTokens !== null ? formatTokens(i.amountTokens) : '—'}</td>
+                      <td>{i.amountText}</td>
                       <td>
-                        <span className={`badge ${i.state === 'needs_attention' ? 'badge-warn' : ''}`}>
-                          {PROVIDER_INTENT_STATE_FA[i.state] ?? i.state}
-                        </span>
+                        <span className={`badge ${i.state === 'needs_attention' ? 'badge-warn' : ''}`}>{i.stateLabel}</span>
                       </td>
-                      <td className="small">{i.actor ?? '—'}</td>
-                      <td className="small dim">{formatDateTime(i.createdAt)}</td>
+                      <td className="small">{i.actor}</td>
+                      <td className="small dim">{i.dateText}</td>
                     </tr>
                   ))}
                 </tbody>

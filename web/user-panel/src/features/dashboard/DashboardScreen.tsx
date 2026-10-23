@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card, Chip } from '../../components/ui';
 import { api, type AccountStatus, type MeResult, type UsageSummary } from '../../lib/api';
-import { isProviderBalanceUnavailable, maskedKeyHint } from '../../lib/api/usage';
+import { buildProviderKeySummaryView, isProviderBalanceUnavailable } from '../../lib/api/usage';
 import { useLang, type StringKey } from '../../lib/i18n';
 import type { View } from '../../lib/view';
 import { WeekChart } from './WeekChart';
@@ -90,7 +90,10 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
   const perUser = (status.routingMode ?? me.routingMode) === 'per_user';
   const providerKey = status.providerKey ?? me.providerKey ?? null;
   const balanceUnavailable = perUser && isProviderBalanceUnavailable(providerKey);
-  const keyHint = perUser ? maskedKeyHint(providerKey?.keyLast4) : null;
+  /* All key display strings come from the view builder — the component never
+     renders the raw keyLast4 field (masking enforced at the boundary). */
+  const keyView = perUser ? buildProviderKeySummaryView(providerKey) : null;
+  const keyHint = keyView?.hint ?? null;
 
   return (
     <div>
@@ -177,17 +180,13 @@ export function DashboardScreen({ onNavigate }: { onNavigate?: (v: View) => void
             })}
           </p>
         ) : null}
-        {perUser && providerKey ? (
+        {perUser && keyView ? (
           <div className="dash-key-row" data-testid="provider-key-summary">
             <span className="dash-key-label">{t('dashboard.providerKey')}</span>
-            <Chip
-              tone={providerKey.status === 'active' ? 'green' : providerKey.status === 'frozen' ? 'accent' : 'amber'}
-            >
-              {t(`dashboard.keyStatus.${providerKey.status}` as StringKey)}
+            <Chip tone={keyView.status === 'active' ? 'green' : keyView.status === 'frozen' ? 'accent' : 'amber'}>
+              {t(`dashboard.keyStatus.${keyView.status}` as StringKey)}
             </Chip>
-            <span className="dash-key-issued">
-              {t('dashboard.keyIssued', { count: fmtNum(providerKey.tokenLimitIssued) })}
-            </span>
+            <span className="dash-key-issued">{t('dashboard.keyIssued', { count: fmtNum(keyView.issuedTokens) })}</span>
             {keyHint ? (
               <span className="dash-key-hint">
                 {t('dashboard.keyLabel')} <span className="ltr-island">{keyHint}</span>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Card, EmptyState, Spinner } from '../../components/ui';
 import { api, isApiError, type CreditsResult, type LedgerKind, type LedgerRow } from '../../lib/api';
+import { redactKeyMaterial } from '../../lib/api/usage';
 import { ERROR_CODE_KEYS, useLang, type LangCtx, type StringKey } from '../../lib/i18n';
 import { RecentActivity } from './RecentActivity';
 import './history.css';
@@ -93,9 +94,9 @@ function LedgerRowView({ row }: { row: LedgerRow }) {
     }
   } else if (row.kind === 'purchase') {
     const ref = row.note ?? (row.refId ? `${row.refType ?? ''} ${row.refId}`.trim() : row.refType);
-    sub = ref ?? null;
+    sub = ref ? redactKeyMaterial(ref) : null;
   } else if (row.note) {
-    sub = row.note;
+    sub = redactKeyMaterial(row.note);
   }
 
   const d = new Date(row.createdAt);
@@ -113,7 +114,9 @@ function LedgerRowView({ row }: { row: LedgerRow }) {
       <div className="history-row-main">
         <div className="history-row-title">
           {title}
-          {row.kind === 'consume' && row.model ? <span className="ltr-island">{row.model}</span> : null}
+          {row.kind === 'consume' && row.model ? (
+            <span className="ltr-island">{redactKeyMaterial(row.model)}</span>
+          ) : null}
         </div>
         {sub ? <div className="history-row-sub">{sub}</div> : null}
         <div className="history-date">

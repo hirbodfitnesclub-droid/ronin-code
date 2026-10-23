@@ -1,6 +1,6 @@
-import { ApiError } from './errors';
-import { clearSession, loadSession, saveSession } from './session';
-import { deriveUsage, isPerUserMode, mapRecentUsage } from './usage';
+import { ApiError } from './errors.ts';
+import { clearSession, loadSession, saveSession } from './session.ts';
+import { deriveUsage, isPerUserMode, mapRecentUsage } from './usage.ts';
 import type {
   AccountStatus,
   Claim,
@@ -20,7 +20,7 @@ import type {
   User,
 } from './types';
 
-const BASE: string = import.meta.env.VITE_API_BASE_URL ?? '';
+const BASE: string = import.meta.env?.VITE_API_BASE_URL ?? '';
 
 interface ErrorBody {
   error?: { code?: string; message?: string };

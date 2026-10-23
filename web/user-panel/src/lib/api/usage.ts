@@ -44,13 +44,13 @@ export function mapRecentUsage(raw: unknown): RecentUsageResult {
     const row = r as Partial<RecentUsageRow>;
     if (typeof row?.model !== 'string' || typeof row?.createdAt !== 'string') continue;
     rows.push({
-      model: row.model,
+      model: redactKeyMaterial(row.model),
       inputTokens: Number(row.inputTokens) || 0,
       outputTokens: Number(row.outputTokens) || 0,
       cachedTokens: Number(row.cachedTokens) || 0,
       costTokens: Number(row.costTokens) || 0,
       fast: row.fast === true,
-      status: typeof row.status === 'string' ? row.status : 'success',
+      status: typeof row.status === 'string' ? redactKeyMaterial(row.status) : 'success',
       createdAt: row.createdAt,
     });
   }
@@ -61,11 +61,44 @@ export function mapRecentUsage(raw: unknown): RecentUsageResult {
   };
 }
 
-/** Masked key hint for display: '•••• 9f3k'. Only last-4 ever exists client-side. */
+/** Masked key hint for display: '•••• 9f3k'. Only last-4 ever exists client-side.
+    DEFENSIVE (tech-lead battery): even if a misbehaving API returned a FULL key
+    in this field, only its last 4 chars can ever be rendered. */
 export function maskedKeyHint(keyLast4: string | null | undefined): string | null {
   if (!keyLast4) return null;
   const last4 = keyLast4.replace(/^…+/, '').slice(-4);
   return last4 ? `•••• ${last4}` : null;
+}
+
+/** Full-key pattern (provider-style secrets). Used by redaction + tests. */
+export const FULL_KEY_PATTERN = /sk-[A-Za-z0-9][A-Za-z0-9_-]{19,}/g;
+
+/** Redact any full-key material embedded in free text (notes, reasons, actor
+    strings) before it reaches the DOM. Applied at component boundaries to
+    every server-supplied free-text field a key could hide in. */
+export function redactKeyMaterial(text: string | null | undefined): string {
+  if (!text) return '';
+  return text.replace(FULL_KEY_PATTERN, (m) => `•••• ${m.slice(-4)}`);
+}
+
+/** Every display string the dashboard's provider-key summary renders, built
+    in ONE place so tests can assert on the exact rendered content. The hint
+    is masked here — the component never touches the raw field. */
+export interface ProviderKeySummaryView {
+  status: ProviderKeySummary['status'];
+  issuedTokens: number;
+  hint: string | null;
+}
+
+export function buildProviderKeySummaryView(
+  providerKey: ProviderKeySummary | null | undefined,
+): ProviderKeySummaryView | null {
+  if (!providerKey) return null;
+  return {
+    status: providerKey.status,
+    issuedTokens: providerKey.tokenLimitIssued,
+    hint: maskedKeyHint(providerKey.keyLast4),
+  };
 }
 
 /* Derive dashboard aggregates from /api/credits ledger rows (live mode).
