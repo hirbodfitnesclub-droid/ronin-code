@@ -10,6 +10,12 @@ import { ledgerBalance, spendableTokens, userLedger } from './ledger.js';
 import { createOrder, userOrders, publicOrder } from './orders.js';
 import { handleChatCompletions } from './proxy.js';
 import { requireRateLimit } from './ratelimit.js';
+import { effectivePerUser, routingModeFor, getKeyRow, routedPerUser } from './reseller/routing.js';
+import { getProviderBalance } from './reseller/balance.js';
+import { decryptDelegatedKey, fingerprintOf } from './reseller/crypto.js';
+import { createResellerClient } from './reseller/client.js';
+import { ensureConversionIntent } from './reseller/conversion.js';
+import { ms as msUtil } from './util.js';
 import { createStorage } from './storage.js';
 import { parseMultipart } from './upload.js';
 
@@ -124,12 +130,23 @@ export function createUserApp(db, cfg, sms) {
     sendJson(res, 200, { ok: true });
   });
 
+  /** Per-user balance substitution (§7.1): provider balance replaces the
+   *  ledger figure on display surfaces when the user routes per-user. */
+  async function perUserBalance(userId) {
+    const { perUser, keyRow } = await routedPerUser(db, cfg, userId);
+    if (!perUser || !keyRow) return null;
+    const bal = await getProviderBalance(db, cfg, keyRow);
+    return { ...bal, keyRow };
+  }
+
   router.get('/api/me', async (req, res) => {
     const { user } = await requireUser(req);
+    const pu = await perUserBalance(user.id);
     sendJson(res, 200, {
       user: auth.publicUser(user),
-      balanceTokens: await ledgerBalance(db, user.id),
-      spendableTokens: await spendableTokens(db, user.id),
+      balanceTokens: pu && !pu.unavailable ? pu.balance : await ledgerBalance(db, user.id),
+      spendableTokens: pu && !pu.unavailable ? pu.balance : await spendableTokens(db, user.id),
+      routingMode: await routingModeFor(db, cfg, user.id),
       isAdminPhone: isAdminPhone(cfg, user.phone), // informational only — admin access lives in the separate admin app
     });
   });
@@ -164,7 +181,125 @@ export function createUserApp(db, cfg, sms) {
   router.get('/api/account-status', async (req, res, { query }) => {
     const { user, deviceId } = await requireUser(req);
     const status = await auth.accountStatus(db, user.id, query.get('deviceId') || deviceId);
-    sendJson(res, 200, { userId: user.id, ...status });
+    // Lazy conversion trigger (§9.1a): first account-status after the flag
+    // reaches this user freezes their v1 balance into a convert intent.
+    let keyRow = await getKeyRow(db, user.id);
+    if (await effectivePerUser(db, cfg, user.id)) {
+      if (!keyRow?.converted_at) {
+        await ensureConversionIntent(db, cfg, user.id).catch(() => {});
+        keyRow = await getKeyRow(db, user.id);
+      }
+    }
+    const routingMode = await routingModeFor(db, cfg, user.id);
+    const out = { userId: user.id, ...status, routingMode };
+    if (keyRow) {
+      const liveIntent = await db.one(
+        "SELECT id FROM public.key_issuance_intents WHERE user_id = $1 AND kind = 'convert' AND state IN ('pending','in_flight','issued') ORDER BY id DESC LIMIT 1",
+        [user.id]);
+      out.providerKey = {
+        status: liveIntent && keyRow.converted_at && !keyRow.encrypted_key ? 'converting' : keyRow.status,
+        tokenLimitIssued: Number(keyRow.token_limit_issued ?? 0),
+        balanceStale: false,
+      };
+      const { perUser } = await routedPerUser(db, cfg, user.id);
+      if (perUser) {
+        const bal = await getProviderBalance(db, cfg, keyRow);
+        if (!bal.unavailable) {
+          out.balanceTokens = bal.balance;
+          out.spendableTokens = bal.balance;
+          out.lots = [];
+          out.providerKey.balanceStale = bal.stale;
+        }
+      }
+    }
+    sendJson(res, 200, out);
+  });
+
+  // ── Phase 2: delegated-key delivery (§5.2) ─────────────────────────────
+  router.get('/api/subscription/credential', async (req, res) => {
+    const { user } = await requireUser(req); // authenticate() enforces device registry + is_active
+    await requireRateLimit(db, `credential:${user.id}`, 30, 3_600_000, 'credential_rate_limited');
+    res.setHeader('Cache-Control', 'no-store');
+    if (!(await effectivePerUser(db, cfg, user.id))) {
+      return sendJson(res, 200, { routingMode: 'shared' });
+    }
+    const keyRow = await getKeyRow(db, user.id);
+    if (!keyRow) return sendJson(res, 200, { routingMode: 'per_user', keyStatus: 'none' });
+    const base = {
+      routingMode: 'per_user', keyStatus: keyRow.status,
+      tokenLimitIssued: Number(keyRow.token_limit_issued ?? 0),
+      issuedAt: msUtil(keyRow.updated_at),
+    };
+    if (keyRow.status === 'frozen') return sendJson(res, 200, base); // no plaintext for frozen keys
+    if (keyRow.status === 'active' && keyRow.encrypted_key) {
+      let plain;
+      try {
+        plain = decryptDelegatedKey(cfg, keyRow.encrypted_key, { userId: user.id, keyRowId: keyRow.id });
+      } catch {
+        return sendJson(res, 200, { ...base, keyStatus: 'needs_attention' });
+      }
+      return sendJson(res, 200, {
+        ...base, delegatedKey: plain, keyFingerprint: fingerprintOf(plain), keyLast4: keyRow.key_last4,
+      });
+    }
+    return sendJson(res, 200, base);
+  });
+
+  // ── Phase 2: provider usage for panels (§7.2/§7.3) ─────────────────────
+  router.get('/api/usage/recent', async (req, res) => {
+    const { user } = await requireUser(req);
+    const keyRow = await getKeyRow(db, user.id);
+    if (!keyRow?.encrypted_key || !(await effectivePerUser(db, cfg, user.id))) {
+      return sendJson(res, 200, { rows: [], totalRequests: 0, windowNote: 'recent_30' });
+    }
+    let plain;
+    try { plain = decryptDelegatedKey(cfg, keyRow.encrypted_key, { userId: user.id, keyRowId: keyRow.id }); }
+    catch { return sendJson(res, 200, { rows: [], totalRequests: 0, windowNote: 'recent_30' }); }
+    const client = createResellerClient(cfg);
+    const { logs, total } = await client.getLogs(plain);
+    sendJson(res, 200, {
+      rows: logs.map((l) => ({
+        model: l.model, reasoningEffort: l.reasoning_effort ?? null,
+        inputTokens: Number(l.input_tokens ?? 0), outputTokens: Number(l.output_tokens ?? 0),
+        cachedTokens: Number(l.cached_tokens ?? 0), costTokens: Number(l.cost_tokens ?? 0),
+        fast: Boolean(l.fast), status: l.status, createdAt: l.created_at,
+      })),
+      totalRequests: total, windowNote: 'recent_30',
+    });
+  });
+
+  router.get('/api/usage/summary', async (req, res) => {
+    const { user } = await requireUser(req);
+    // UsageSummary shape (user panel types): today/month in Asia/Tehran days,
+    // built from key_usage_daily rollups (§7.3). Partial days are a lower bound.
+    const todayRow = await db.one(
+      `SELECT COALESCE(SUM(cost_tokens),0)::bigint AS s FROM public.key_usage_daily
+       WHERE user_id = $1 AND day = (now() AT TIME ZONE 'Asia/Tehran')::date`, [user.id]);
+    const monthRow = await db.one(
+      `SELECT COALESCE(SUM(cost_tokens),0)::bigint AS s FROM public.key_usage_daily
+       WHERE user_id = $1 AND day >= (date_trunc('month', (now() AT TIME ZONE 'Asia/Tehran')))::date`, [user.id]);
+    const days = await db.many(
+      `SELECT day, COALESCE(SUM(cost_tokens),0)::bigint AS tokens, bool_or(partial) AS partial
+       FROM public.key_usage_daily
+       WHERE user_id = $1 AND day > (now() AT TIME ZONE 'Asia/Tehran')::date - 7
+       GROUP BY day ORDER BY day`, [user.id]);
+    const models = await db.many(
+      `SELECT model, COALESCE(SUM(cost_tokens),0)::bigint AS tokens FROM public.key_usage_daily
+       WHERE user_id = $1 GROUP BY model ORDER BY tokens DESC LIMIT 5`, [user.id]);
+    const byDay = new Map(days.map((d) => [String(d.day instanceof Date ? d.day.toISOString().slice(0, 10) : d.day).slice(0, 10), d]));
+    const last7Days = [];
+    for (let i = 6; i >= 0; i--) {
+      const dt = new Date(Date.now() - i * 86_400_000);
+      const key = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran' }).format(dt);
+      const hit = byDay.get(key);
+      last7Days.push({ date: key, tokens: hit ? Number(hit.tokens) : 0, ...(hit?.partial ? { partial: true } : {}) });
+    }
+    sendJson(res, 200, {
+      todayTokens: Number(todayRow.s), monthTokens: Number(monthRow.s),
+      last7Days,
+      topModels: models.map((m) => ({ model: m.model, tokens: Number(m.tokens) })),
+      hasPartialDays: days.some((d) => d.partial),
+    });
   });
 
   router.get('/api/packs', async (req, res) => {
@@ -216,20 +351,43 @@ export function createUserApp(db, cfg, sms) {
 
   router.get('/api/orders', async (req, res) => {
     const { user } = await requireUser(req);
-    sendJson(res, 200, { orders: (await userOrders(db, user.id)).map(publicOrder) });
+    const orders = await userOrders(db, user.id);
+    const out = [];
+    for (const o of orders) {
+      const intent = await db.one(
+        `SELECT state FROM public.key_issuance_intents WHERE order_id = $1 ORDER BY id DESC LIMIT 1`, [o.id]);
+      out.push(publicOrder(o, intent ? { issuanceState: intent.state } : {}));
+    }
+    sendJson(res, 200, { orders: out });
   });
 
   router.get('/api/credits', async (req, res) => {
     const { user } = await requireUser(req);
+    const pu = await perUserBalance(user.id);
     sendJson(res, 200, {
-      balanceTokens: await ledgerBalance(db, user.id),
-      spendableTokens: await spendableTokens(db, user.id),
+      balanceTokens: pu && !pu.unavailable ? pu.balance : await ledgerBalance(db, user.id),
+      spendableTokens: pu && !pu.unavailable ? pu.balance : await spendableTokens(db, user.id),
+      routingMode: await routingModeFor(db, cfg, user.id),
       ledger: await userLedger(db, user.id),
       orders: (await userOrders(db, user.id)).map(publicOrder),
     });
   });
 
   router.post('/v1/chat/completions', async (req, res) => {
+    // Dual-auth (§6.2): (B) a delegated-key Bearer authenticates by
+    // fingerprint lookup — no session/device requirement; (A) otherwise the
+    // session Bearer goes through the normal authenticate() path.
+    const token = bearer(req);
+    if (token) {
+      const fp = fingerprintOf(token);
+      const keyRow = await db.one('SELECT * FROM public.user_provider_keys WHERE key_fingerprint = $1', [fp]);
+      if (keyRow) {
+        const user = await db.one('SELECT * FROM public.users WHERE id = $1', [keyRow.user_id]);
+        if (user) {
+          return handleChatCompletions(db, cfg, req, res, user, { delegatedKey: token, keyRow });
+        }
+      }
+    }
     const { user } = await requireUser(req);
     if (!user.is_active) throw forbidden('account_disabled', 'Account disabled.');
     await handleChatCompletions(db, cfg, req, res, user);

@@ -1,6 +1,7 @@
 import { getPack } from './settings.js';
 import { badRequest, notFound, conflict, num, ms } from './util.js';
 import { receiptKey, sha256Hex } from './storage.js';
+import { ensureClaimIntent } from './reseller/intents.js';
 
 /**
  * Card-to-card purchase — RECEIPT PHOTO ONLY (owner decision 2026-10-22,
@@ -106,7 +107,14 @@ export async function reviewOrder(db, cfg, adminPhone, orderId, { action, receiv
       if (r.error === 'invalid_amount') throw badRequest('invalid_amount', 'Received amount is invalid.');
       throw new Error(`approve_claim failed: ${r.error}`);
     }
-    return { order: r.order, grantedTokens: Number(r.grantedTokens) };
+    // Phase 2 (§3.1): post-commit issuance intent — approval NEVER calls the
+    // provider and never fails because it is down; the sweeper guarantees
+    // the intent eventually exists.
+    const issuance = await ensureClaimIntent(db, cfg, {
+      userId: r.order.user_id, orderId: Number(orderId),
+      grantedTokens: Number(r.grantedTokens), actor: `admin:${adminPhone}`,
+    });
+    return { order: r.order, grantedTokens: Number(r.grantedTokens), issuance };
   }
 
   const row = await db.one(

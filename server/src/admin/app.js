@@ -14,6 +14,10 @@ import * as adminAuth from './auth.js';
 import { effectiveCaps, requireCap, requireOwner, getFinanceStaff, sanitizeCaps } from './caps.js';
 import { registerFinanceRoutes } from './finance.js';
 import { registerAnalyticsRoutes } from './analytics.js';
+import { registerProviderRoutes } from './provider.js';
+import { getKeyRow } from '../reseller/routing.js';
+import { ensureMirrorIntent } from '../reseller/intents.js';
+import { ensureConversionIntent } from '../reseller/conversion.js';
 
 const ADMIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.resolve(ADMIN_DIR, '../../../web/admin-panel/dist');
@@ -153,7 +157,46 @@ export function createAdminApp(db, cfg, sms) {
     await db.query('UPDATE public.users SET is_active = $2 WHERE id = $1', [user.id, active]);
     if (!active) await auth.logoutAll(db, user.id); // disabling also kills live sessions/devices
     await audit(db, session.phone, active ? 'user_activated' : 'user_deactivated', `user:${user.id}`, null);
-    sendJson(res, 200, { ok: true, isActive: active });
+    // Phase 2 mirrors (§4.1/§4.2): suspend → freeze intent; reactivate →
+    // unfreeze intent + re-intent any approved-but-unissued total.
+    let intent = null;
+    if (!active) {
+      const keyRow = await getKeyRow(db, user.id);
+      if (keyRow?.encrypted_key) {
+        intent = await ensureMirrorIntent(db, cfg, {
+          userId: user.id, kind: 'freeze', source: 'suspend',
+          idempotencyKey: `suspend:${user.id}:${Date.now()}`, actor: `admin:${session.phone}`,
+        });
+      }
+    } else {
+      const keyRow = await getKeyRow(db, user.id);
+      if (keyRow?.encrypted_key && keyRow.status === 'frozen') {
+        intent = await ensureMirrorIntent(db, cfg, {
+          userId: user.id, kind: 'unfreeze', source: 'reactivate',
+          idempotencyKey: `reactivate:${user.id}:${Date.now()}`, actor: `admin:${session.phone}`,
+        });
+      } else if (keyRow && !keyRow.converted_at) {
+        await ensureConversionIntent(db, cfg, user.id).catch(() => {});
+      }
+      if (keyRow?.encrypted_key) {
+        const totals = await db.one(
+          `SELECT
+             (SELECT COALESCE(SUM(delta_tokens),0)::bigint FROM public.ledger WHERE user_id = $1 AND kind IN ('purchase','adjust') AND delta_tokens > 0) AS granted,
+             (SELECT COALESCE(SUM(amount_tokens),0)::bigint FROM public.key_issuance_intents WHERE user_id = $1 AND kind IN ('create','topup','convert') AND state IN ('pending','in_flight')) AS live`,
+          [user.id]);
+        // §4.2 formula: ledger purchase/adjust total − issued − live intents.
+        const unissued = Number(totals.granted)
+          - Number(keyRow.token_limit_issued ?? 0) - Number(totals.live);
+        if (unissued > 0) {
+          await ensureMirrorIntent(db, cfg, {
+            userId: user.id, kind: 'topup', source: 'reactivate',
+            idempotencyKey: `reactivate-unissued:${user.id}:${Date.now()}`,
+            amountTokens: unissued, actor: `admin:${session.phone}`,
+          });
+        }
+      }
+    }
+    sendJson(res, 200, { ok: true, isActive: active, intentId: intent ? Number(intent.id) : null });
   });
 
   router.post('/admin-api/users/:id/charge', async (req, res, { params }) => {
@@ -169,6 +212,16 @@ export function createAdminApp(db, cfg, sms) {
       userId: user.id, tokens, actor: `admin:${session.phone}`, note: String(body.note),
     });
     await audit(db, session.phone, 'user_manual_charge', `user:${user.id}`, { tokens, note: String(body.note) });
+    // Phase 2 mirror (§4.5): positive → topup intent, negative → reduce.
+    const led = await db.one(
+      "SELECT id FROM public.ledger WHERE user_id = $1 AND kind = 'adjust' ORDER BY id DESC LIMIT 1", [user.id]);
+    if (led) {
+      await ensureMirrorIntent(db, cfg, {
+        userId: user.id, kind: tokens > 0 ? 'topup' : 'reduce', source: 'admin_charge',
+        ledgerIdempotencyKey: `adjust:${led.id}`, idempotencyKey: `adjust:${led.id}`,
+        amountTokens: Math.abs(tokens), actor: `admin:${session.phone}`,
+      });
+    }
     sendJson(res, 200, { ok: true, balanceTokens: balanceAfter });
   });
 
@@ -300,7 +353,7 @@ export function createAdminApp(db, cfg, sms) {
     const body = await readJson(req);
     const before = await getOrder(db, Number(params.id));
     if (!before) throw notFound('order_not_found', 'Order not found.');
-    const { order, grantedTokens } = await reviewOrder(db, cfg, session.phone, before.id, {
+    const { order, grantedTokens, issuance } = await reviewOrder(db, cfg, session.phone, before.id, {
       action: body.action,
       receivedAmountRials: body.receivedAmountRials,
       reason: body.reason, note: body.note,
@@ -312,7 +365,10 @@ export function createAdminApp(db, cfg, sms) {
       else if (order.status === 'rejected') void sms.sendOrderRejected(user.phone, order.reject_reason);
     }
     const dupCounts = await duplicateFlags([order]);
-    sendJson(res, 200, { order: publicOrderAdmin(order, dupCounts), grantedTokens });
+    sendJson(res, 200, {
+      order: publicOrderAdmin(order, dupCounts), grantedTokens,
+      issuance: issuance ?? { state: 'not_applicable' },
+    });
   });
 
   router.post('/admin-api/orders/:id/refund', async (req, res, { params }) => {
@@ -333,6 +389,18 @@ export function createAdminApp(db, cfg, sms) {
       throw badRequest(r.error || 'refund_failed', 'Refund failed.');
     }
     const rf = r.refund;
+    // Phase 2 mirror (§4.5): provider reduce intent for tokensRemoved
+    // (idempotent absolute op — safe to retry in the worker).
+    if (!r.replayed && Number(r.tokensRemoved) > 0) {
+      const ord = await getOrder(db, Number(params.id));
+      if (ord) {
+        await ensureMirrorIntent(db, cfg, {
+          userId: ord.user_id, kind: 'reduce', source: 'refund',
+          refundId: Number(rf.id), idempotencyKey: `refund:${rf.id}`,
+          amountTokens: Number(r.tokensRemoved), actor: `admin:${session.phone}`,
+        });
+      }
+    }
     sendJson(res, 200, {
       replayed: Boolean(r.replayed),
       tokensRemoved: Number(r.tokensRemoved),
@@ -348,6 +416,7 @@ export function createAdminApp(db, cfg, sms) {
   // ── finance console + analytics + analyst ────────────────────────────────
   registerFinanceRoutes(router, { db, cfg, guard });
   registerAnalyticsRoutes(router, { db, cfg, guard });
+  registerProviderRoutes(router, { db, cfg, guardCap, guardOwner });
 
   // ── settings: card, packs, models, token config, finance staff ──────────
   router.get('/admin-api/settings', async (req, res) => {

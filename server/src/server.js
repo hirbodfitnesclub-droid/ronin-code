@@ -5,6 +5,9 @@ import { createSms } from './sms/index.js';
 import { createUserApp } from './app.js';
 import { createAdminApp } from './admin/app.js';
 import { runExpirySweep } from './ledger.js';
+import { createWorker } from './reseller/worker.js';
+import { registerWorkerKick } from './reseller/intents.js';
+import { encryptionReady } from './reseller/crypto.js';
 
 loadDotEnv();
 const cfg = loadConfig();
@@ -29,6 +32,20 @@ async function sweep() {
 }
 void sweep();
 setInterval(sweep, 6 * 3_600_000).unref();
+
+// Phase 2 reseller worker (§3.3): intent drain (15 s) + backfill sweeper
+// (60 s) + reconciliation sweep (15 min), all in-process, all unref'd.
+if (cfg.cvcBaseUrl && cfg.cvcPrimaryApiKey) {
+  if (!encryptionReady(cfg)) {
+    log.error('cvc_key_encryption_key_invalid', { note: 'CVC_KEY_ENCRYPTION_KEY missing or not 32-byte base64 — per-user issuance/relay fail closed' });
+  }
+  const resellerWorker = createWorker(db, cfg);
+  registerWorkerKick(() => resellerWorker.drainOnce());
+  resellerWorker.start();
+  log.info('reseller_worker_started', {});
+} else {
+  log.warn('reseller_not_configured', { note: 'CVC_BASE_URL / CVC_PRIMARY_API_KEY not set — Phase 2 issuance is dormant (shared mode)' });
+}
 
 const api = createUserApp(db, cfg, sms);
 const admin = createAdminApp(db, cfg, sms);
