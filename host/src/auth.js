@@ -13,10 +13,20 @@
 
 import fs from "node:fs";
 import os from "node:os";
+import crypto from "node:crypto";
 import { CREDENTIALS_PATH } from "./paths.js";
 import { readJsonFile, writeJsonFile0600 } from "./util.js";
-import { config } from "./config.js";
+import { config, maskedKey } from "./config.js";
 import { log } from "./log.js";
+
+/** SHA-256 hex fingerprint of a delegated subscription key. Used only
+ *  for change detection (rotation / replacement) and diagnostics —
+ *  never the key itself, and a hash cannot be turned back into a
+ *  spendable key (design §5.3). */
+export function subscriptionKeyFingerprint(key) {
+  if (typeof key !== "string" || !key) return null;
+  return crypto.createHash("sha256").update(key).digest("hex");
+}
 
 export const DEFAULT_SERVER_URL = "http://127.0.0.1:7443";
 export const DEFAULT_PANEL_URL = "http://127.0.0.1:5173";
@@ -57,6 +67,17 @@ export class CredentialStore {
       user: s.user && typeof s.user === "object" ? s.user : null,
       serverUrl: typeof s.serverUrl === "string" ? s.serverUrl : null,
       savedAt: typeof s.savedAt === "string" ? s.savedAt : null,
+      // Phase 2 (design §5.3): the user's own delegated provider key,
+      // kept as a SEPARATE field of this record — never in auth.json
+      // (BYOK keys) or config.json, never sent to the GUI in raw form.
+      subscriptionKey: typeof s.subscriptionKey === "string" && s.subscriptionKey ? s.subscriptionKey : null,
+      subscriptionKeyFingerprint:
+        typeof s.subscriptionKeyFingerprint === "string" && s.subscriptionKeyFingerprint
+          ? s.subscriptionKeyFingerprint
+          : null,
+      subscriptionKeyStatus:
+        typeof s.subscriptionKeyStatus === "string" && s.subscriptionKeyStatus ? s.subscriptionKeyStatus : null,
+      routingMode: s.routingMode === "per_user" || s.routingMode === "shared" ? s.routingMode : null,
     };
   }
 
@@ -68,6 +89,16 @@ export class CredentialStore {
       user: session.user ?? null,
       serverUrl: session.serverUrl ?? null,
       savedAt: new Date().toISOString(),
+      subscriptionKey: typeof session.subscriptionKey === "string" && session.subscriptionKey ? session.subscriptionKey : null,
+      subscriptionKeyFingerprint:
+        typeof session.subscriptionKeyFingerprint === "string" && session.subscriptionKeyFingerprint
+          ? session.subscriptionKeyFingerprint
+          : null,
+      subscriptionKeyStatus:
+        typeof session.subscriptionKeyStatus === "string" && session.subscriptionKeyStatus
+          ? session.subscriptionKeyStatus
+          : null,
+      routingMode: session.routingMode === "per_user" || session.routingMode === "shared" ? session.routingMode : null,
     });
   }
 
@@ -109,6 +140,8 @@ export class AuthManager {
     this._hasChecked = false; // a revalidate() succeeded at least once since boot
     this._refreshPromise = null;
     this._revalidatePromise = null;
+    this._credentialPromise = null;
+    this._credentialFetchNeeded = false;
   }
 
   serverUrl() {
@@ -131,23 +164,62 @@ export class AuthManager {
 
   state() {
     const session = this.store.load();
+    let subscription = null;
+    if (this._subscription) {
+      subscription = { ...this._subscription };
+      // GUI-visible minimum only (design §5.3): a masked form + the
+      // key status. The raw delegated key NEVER leaves the store.
+      const key = session?.subscriptionKey || null;
+      subscription.subscriptionKeyMasked = key ? maskedKey(key) : null;
+      subscription.subscriptionKeyStatus =
+        session?.subscriptionKeyStatus || subscription.providerKey?.status || null;
+    }
     return {
       loggedIn: Boolean(session),
       user: session ? session.user : null,
-      subscription: this._subscription ? { ...this._subscription } : null,
+      subscription,
     };
+  }
+
+  /** 'per_user' | 'shared' — learned from the server (account-status
+   *  payload / credential endpoint), never a client-side flag (§11). */
+  subscriptionRoutingMode() {
+    if (this._subscription?.routingMode) return this._subscription.routingMode;
+    const stored = this.store.load();
+    return stored?.routingMode || "shared";
+  }
+
+  /** The stored delegated key (host-internal only — callers must never
+   *  log it or forward it to the GUI). Null in shared mode. */
+  getSubscriptionKey() {
+    const s = this.store.load();
+    return s?.subscriptionKey || null;
+  }
+
+  getSubscriptionKeyFingerprint() {
+    const s = this.store.load();
+    if (!s?.subscriptionKey) return null;
+    return s.subscriptionKeyFingerprint || subscriptionKeyFingerprint(s.subscriptionKey);
   }
 
   // ---------- session lifecycle ----------
 
   _persistSession(body) {
     const prev = this.store.load();
+    const nextUser = body.user ?? prev?.user ?? null;
+    // Account switch must never carry the previous account's delegated
+    // key over: preserve the key only when the user is unchanged.
+    const sameUser = !prev?.user?.id || !nextUser?.id || prev.user.id === nextUser.id;
     const session = {
       accessToken: body.accessToken,
       refreshToken: body.refreshToken,
       deviceId: body.deviceId ?? prev?.deviceId ?? null,
-      user: body.user ?? prev?.user ?? null,
+      user: nextUser,
       serverUrl: this.serverUrl(),
+      subscriptionKey: sameUser ? (prev?.subscriptionKey ?? null) : null,
+      subscriptionKeyFingerprint: sameUser ? (prev?.subscriptionKeyFingerprint ?? null) : null,
+      subscriptionKeyStatus: sameUser ? (prev?.subscriptionKeyStatus ?? null) : null,
+      routingMode: sameUser ? (prev?.routingMode ?? null) : null,
     };
     this.store.save(session);
     return session;
@@ -157,6 +229,42 @@ export class AuthManager {
     this.store.clear();
     this._subscription = null;
     this._hasChecked = false;
+    this._credentialFetchNeeded = false;
+  }
+
+  /** Drop only the delegated key, keeping the session itself. Used on
+   *  account-disabled revalidation, routing rollback to shared mode,
+   *  and when the credential endpoint reports none/deleted/frozen. */
+  _clearSubscriptionKey() {
+    const s = this.store.load();
+    if (!s) return;
+    if (!s.subscriptionKey && !s.subscriptionKeyFingerprint && !s.subscriptionKeyStatus) return;
+    this.store.save({
+      ...s,
+      subscriptionKey: null,
+      subscriptionKeyFingerprint: null,
+      subscriptionKeyStatus: null,
+    });
+  }
+
+  _saveSubscriptionKey(key, keyStatus, routingMode) {
+    const s = this.store.load();
+    if (!s || typeof key !== "string" || !key) return null;
+    const fp = subscriptionKeyFingerprint(key);
+    this.store.save({
+      ...s,
+      subscriptionKey: key,
+      subscriptionKeyFingerprint: fp,
+      subscriptionKeyStatus: keyStatus || "active",
+      routingMode: routingMode || s.routingMode || "per_user",
+    });
+    return fp;
+  }
+
+  _persistRoutingMode(mode) {
+    const s = this.store.load();
+    if (!s || s.routingMode === mode) return;
+    this.store.save({ ...s, routingMode: mode });
   }
 
   async _post(pathname, body, { bearer } = {}) {
@@ -178,6 +286,128 @@ export class AuthManager {
       throw new AuthError(res.status, code);
     }
     return data ?? {};
+  }
+
+  _errorCode(data, status) {
+    if (data && typeof data.error === "string") return data.error;
+    if (data && data.error && typeof data.error.code === "string") return data.error.code;
+    if (data && typeof data.code === "string") return data.code;
+    return `http_${status}`;
+  }
+
+  async _get(pathname, token) {
+    const res = await this.fetchFn(`${this.serverUrl()}${pathname}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new AuthError(res.status, this._errorCode(data, res.status));
+    return data ?? {};
+  }
+
+  // ---------- delegated subscription credential (design §5) ----------
+
+  /**
+   * Fetch the user's own delegated provider key from
+   * GET /api/subscription/credential over the authenticated session
+   * channel (the server's device-registry check applies there).
+   *
+   * Returns a SANITISED summary — never the key itself — so no caller
+   * can accidentally log or forward the plaintext. The key is written
+   * straight into the CredentialStore. Definitive server rejections
+   * throw AuthError; network failures return null (best-effort, the
+   * next revalidate / turn retries). Never logs key material.
+   */
+  async fetchSubscriptionCredential() {
+    if (this._credentialPromise) return this._credentialPromise;
+    const p = (async () => {
+      if (!this.store.load()) return null;
+      const token = await this.ensureFreshAccess();
+      if (!token) return null;
+      let data;
+      try {
+        data = await this._get("/api/subscription/credential", token);
+      } catch (e) {
+        if (e instanceof AuthError) {
+          if (e.status === 404) {
+            // Older server without the endpoint: stay in shared mode.
+            return { routingMode: "shared", keyStatus: null };
+          }
+          if (e.code === "account_disabled" || e.code === "account_suspended") {
+            this._clearSubscriptionKey();
+          }
+          throw e;
+        }
+        log.warn("subscription_credential_fetch_failed", { error: "network" });
+        return null;
+      }
+      const routingMode = data.routingMode === "per_user" ? "per_user" : "shared";
+      if (routingMode === "shared") {
+        this._clearSubscriptionKey();
+        this._persistRoutingMode("shared");
+        if (this._subscription) {
+          this._subscription = { ...this._subscription, routingMode: "shared" };
+        }
+        log.info("subscription_credential_fetched", { routingMode, keyStatus: null });
+        return { routingMode, keyStatus: null, tokenLimitIssued: null };
+      }
+      const keyStatus = typeof data.keyStatus === "string" ? data.keyStatus : "none";
+      const tokenLimitIssued = typeof data.tokenLimitIssued === "number" ? data.tokenLimitIssued : null;
+      this._persistRoutingMode("per_user");
+      if (this._subscription) {
+        this._subscription = {
+          ...this._subscription,
+          routingMode: "per_user",
+          providerKey: {
+            status: keyStatus,
+            tokenLimitIssued,
+            balanceStale: this._subscription.providerKey?.balanceStale ?? false,
+          },
+        };
+      }
+      if (keyStatus === "none" || keyStatus === "deleted" || keyStatus === "frozen") {
+        // No spendable key to hold: frozen keys are withheld by the
+        // server (§5.2) and a stale local copy must not be used.
+        this._clearSubscriptionKey();
+      } else if (typeof data.delegatedKey === "string" && data.delegatedKey) {
+        if (keyStatus === "active" || keyStatus === "needs_attention") {
+          // Compare-by-hash happens inside the store write: a rotated /
+          // replacement key simply overwrites the old fingerprint.
+          this._saveSubscriptionKey(data.delegatedKey, keyStatus, "per_user");
+        }
+      }
+      // pending_create without key material: keep any existing key —
+      // provisioning is transient and must not wipe a working key.
+      log.info("subscription_credential_fetched", { routingMode, keyStatus });
+      return { routingMode, keyStatus, tokenLimitIssued, hasKey: Boolean(this.getSubscriptionKey()) };
+    })();
+    this._credentialPromise = p;
+    try {
+      return await p;
+    } finally {
+      if (this._credentialPromise === p) this._credentialPromise = null;
+    }
+  }
+
+  /** Force a credential re-fetch (key-shaped turn failures, §5.2c). */
+  async refreshSubscriptionCredential() {
+    return this.fetchSubscriptionCredential();
+  }
+
+  /**
+   * The delegated key for a subscription turn, fetching it exactly
+   * once first when absent (design §12.3). Null in shared mode or when
+   * the server has no active key yet (pending_create / none).
+   */
+  async ensureSubscriptionKey() {
+    if (this.subscriptionRoutingMode() !== "per_user") return null;
+    const existing = this.getSubscriptionKey();
+    if (existing) return existing;
+    try {
+      await this.fetchSubscriptionCredential();
+    } catch {
+      return null;
+    }
+    return this.getSubscriptionKey();
   }
 
   async exchangeCode(code) {
@@ -273,14 +503,28 @@ export class AuthManager {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      const code =
-        data && typeof data.error === "string" ? data.error : `http_${res.status}`;
-      throw new AuthError(res.status, code);
+      throw new AuthError(res.status, this._errorCode(data, res.status));
     }
     return data ?? {};
   }
 
   _cacheSubscription(body) {
+    const prev = this._subscription;
+    // §7.1 / §11: routingMode + providerKey arrive on account-status in
+    // per-user mode; older/shared servers omit them → shared. Balance
+    // fields keep their names, so the GUI header keeps working — in
+    // per-user mode the server fills them from the provider (§7.1).
+    const routingMode = body.routingMode === "per_user" ? "per_user" : "shared";
+    const pk = body.providerKey && typeof body.providerKey === "object" ? body.providerKey : null;
+    const providerKey = pk
+      ? {
+          status: typeof pk.status === "string" ? pk.status : null,
+          tokenLimitIssued: typeof pk.tokenLimitIssued === "number" ? pk.tokenLimitIssued : null,
+          balanceStale: pk.balanceStale === true,
+        }
+      : prev?.providerKey && routingMode === "per_user"
+        ? prev.providerKey
+        : { status: null, tokenLimitIssued: null, balanceStale: false };
     this._subscription = {
       status: typeof body.status === "string" ? body.status : "disabled",
       isActive: body.isActive === true,
@@ -290,11 +534,47 @@ export class AuthManager {
       activeDevices: typeof body.activeDevices === "number" ? body.activeDevices : null,
       serverTime: typeof body.serverTime === "string" ? body.serverTime : null,
       lots: Array.isArray(body.lots) ? body.lots : [],
+      routingMode,
+      providerKey,
       checkedAt: new Date().toISOString(),
       stale: false,
     };
     this._hasChecked = true;
+    // §5.3 clear triggers evaluated against the fresh server state.
+    if (this._subscription.status !== "active" || this._subscription.isActive !== true) {
+      this._clearSubscriptionKey();
+    } else if (routingMode === "shared" && prev?.routingMode === "per_user") {
+      this._clearSubscriptionKey();
+    }
+    this._persistRoutingMode(routingMode);
+    // §5.2(b): (re)fetch the credential when per-user routing is new,
+    // the stored key is missing, or the key status / issued limit
+    // changed since the previous check.
+    this._credentialFetchNeeded =
+      routingMode === "per_user" &&
+      this._subscription.status === "active" &&
+      (!this.getSubscriptionKey() ||
+        prev?.routingMode !== "per_user" ||
+        prev?.providerKey?.status !== providerKey.status ||
+        prev?.providerKey?.tokenLimitIssued !== providerKey.tokenLimitIssued);
     return this._subscription;
+  }
+
+  /** Cache + the credential fetch a fresh cache may require (§5.2). */
+  async _cacheAndFetchCredential(body) {
+    const sub = this._cacheSubscription(body);
+    if (this._credentialFetchNeeded) {
+      this._credentialFetchNeeded = false;
+      try {
+        await this.fetchSubscriptionCredential();
+      } catch (e) {
+        // Best-effort: a refused credential (e.g. suspended) must not
+        // break revalidation — the subscription cache already carries
+        // the locked state the GUI/turn gate act on.
+        log.warn("subscription_credential_fetch_failed", { code: e instanceof AuthError ? e.code : "unknown" });
+      }
+    }
+    return sub;
   }
 
   /**
@@ -318,7 +598,7 @@ export class AuthManager {
       }
       try {
         const body = await this._fetchAccountStatus(token);
-        return this._cacheSubscription(body);
+        return this._cacheAndFetchCredential(body);
       } catch (e) {
         if (e instanceof AuthError && e.status === 401) {
           // One forced refresh + retry before giving up the session.
@@ -329,7 +609,7 @@ export class AuthManager {
           }
           try {
             const body = await this._fetchAccountStatus(fresh);
-            return this._cacheSubscription(body);
+            return this._cacheAndFetchCredential(body);
           } catch (e2) {
             if (e2 instanceof AuthError && e2.status === 401) {
               log.warn("auth_session_cleared", { code: e2.code });
