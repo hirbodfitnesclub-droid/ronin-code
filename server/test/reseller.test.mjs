@@ -476,6 +476,10 @@ test('admin provider-key dossier + routing flag endpoints + close flow deletes t
 });
 
 test('per-user streaming passthrough + admin-disabled model refused before any provider call', async () => {
+  // Earlier tests revoked A's session (suspend → logoutAll) and narrowed
+  // the routing allowlist (close-flow test) — restore both for this test.
+  userA = await loginUser(stack, USER_PHONE);
+  await setRouting({ mode: 'shared', allowlist: [userA.user.id, userB.user.id, userF.user.id] });
   const streamRes = await fetch(`${stack.base}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${userA.accessToken}` },
@@ -498,6 +502,7 @@ test('per-user streaming passthrough + admin-disabled model refused before any p
 });
 
 test('retry_once resolution: human-confirmed re-dispatch of an ambiguous top-up (double-add is the named risk)', async () => {
+  await setRouting({ mode: 'shared', allowlist: [userA.user.id, userB.user.id, userF.user.id] });
   const charge = await asOwner(`/admin-api/users/${userB.user.id}/charge`, {
     method: 'POST', body: { tokens: 30, note: 'retry once test charge' },
   });
