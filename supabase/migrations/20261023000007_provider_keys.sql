@@ -127,7 +127,7 @@ alter table public.ledger add constraint ledger_kind_check
 -- otherwise freezes amount = spendable (unexpired lots − active holds),
 -- posts the delta-0 'convert' ledger marker (unique idempotency key makes a
 -- racing second call a no-op) and stamps converted_at on the key shell row.
-create or replace function public.begin_provider_conversion(p_user_id uuid)
+create or replace function public.begin_provider_conversion(p_user_id uuid, p_amount bigint default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_key public.user_provider_keys;
@@ -148,7 +148,11 @@ begin
     return jsonb_build_object('ok', true, 'status', 'deferred_holds_active', 'amount', 0);
   end if;
 
-  v_amount := greatest(0, public._unexpired_lot_tokens(p_user_id));
+  -- p_amount: caller-computed conversion amount (the claim-approval path
+  -- passes spendable MINUS the just-granted pack, which is already in the
+  -- lots by the time the post-commit hook runs — counting it here too
+  -- would double-issue). NULL → the full current spendable balance.
+  v_amount := greatest(0, coalesce(p_amount, public._unexpired_lot_tokens(p_user_id)));
 
   if not found then
     insert into public.user_provider_keys (user_id, provider_key_name, status)
@@ -171,5 +175,5 @@ begin
 end;
 $$;
 
-revoke execute on function public.begin_provider_conversion(uuid) from public;
-grant execute on function public.begin_provider_conversion(uuid) to service_role;
+revoke execute on function public.begin_provider_conversion(uuid, bigint) from public;
+grant execute on function public.begin_provider_conversion(uuid, bigint) to service_role;

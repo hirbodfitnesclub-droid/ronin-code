@@ -65,16 +65,29 @@ export async function ensureClaimIntent(db, cfg, { userId, orderId, grantedToken
   if (!(await effectivePerUser(db, cfg, userId))) return { state: 'not_applicable' };
   if (!grantedTokens || grantedTokens <= 0) return { state: 'not_applicable' };
   try {
-    // Conversion first for a not-yet-converted user (§9.3): the convert
-    // intent carries the OLD balance; this claim's intent follows in FIFO.
+    // Conversion first for a not-yet-converted KEYLESS user (§9.3): the
+    // convert intent carries the OLD balance only — spendable at this point
+    // already includes the just-granted pack (the approval RPC committed
+    // before this hook runs), so the granted amount is excluded from the
+    // conversion amount and carried by this claim's own intent below.
     const keyRow = await getKeyRow(db, userId);
-    if (keyRow && !keyRow.converted_at) {
+    if (!keyRow?.encrypted_key && !keyRow?.converted_at) {
       const { ensureConversionIntent } = await import('./conversion.js');
-      await ensureConversionIntent(db, cfg, userId).catch((e) =>
+      const { spendableTokens } = await import('../ledger.js');
+      const spendable = await spendableTokens(db, userId).catch(() => null);
+      const amountOverride = spendable === null ? null : Math.max(0, spendable - Number(grantedTokens));
+      await ensureConversionIntent(db, cfg, userId, { amountOverride }).catch((e) =>
         log.warn('conversion_before_claim_failed', { error: e.message }));
     }
     const fresh = await getKeyRow(db, userId);
-    const kind = fresh?.encrypted_key ? 'topup' : 'create';
+    // While a convert intent is live the claim rides as a topup: the worker
+    // folds it into the convert's create pre-dispatch (§3.3) or waits for
+    // the key — a second live 'create' would violate the one-live-create
+    // index and, worse, be superseded without issuing the pack.
+    const liveConvert = await db.one(
+      "SELECT id FROM public.key_issuance_intents WHERE user_id = $1 AND kind = 'convert' AND state IN ('pending','in_flight') LIMIT 1",
+      [userId]);
+    const kind = (fresh?.encrypted_key || liveConvert) ? 'topup' : 'create';
     const intent = await insertIntent(db, {
       userId, kind, source: 'claim', orderId,
       ledgerIdempotencyKey: `order-approve:${orderId}`,

@@ -84,9 +84,12 @@ export function createWorker(db, cfg, client = createResellerClient(cfg)) {
   async function coalesce(intent) {
     if (intent.kind !== 'create' && intent.kind !== 'convert') return intent;
     if (Number(intent.attempt_count) > 1) return intent; // already dispatched once — never rewrite arithmetic
+    // Fold later pending create/topup intents into this create/convert: the
+    // §9.3 pair (convert of the old balance + the claim's topup) must land
+    // as ONE provider create with the summed limit.
     const topups = await db.many(
       `SELECT * FROM public.key_issuance_intents
-       WHERE user_id = $1 AND kind = 'topup' AND state = 'pending' AND id > $2 ORDER BY id`,
+       WHERE user_id = $1 AND kind IN ('topup','create') AND state = 'pending' AND id > $2 ORDER BY id`,
       [intent.user_id, intent.id]);
     if (!topups.length) return intent;
     let amount = Number(intent.amount_tokens ?? 0);
