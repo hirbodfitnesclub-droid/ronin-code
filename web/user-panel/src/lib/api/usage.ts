@@ -1,4 +1,72 @@
-import type { CreditsResult, DayUsage, ModelUsage, UsageSummary } from './types';
+import type {
+  CreditsResult,
+  DayUsage,
+  ModelUsage,
+  ProviderKeySummary,
+  RecentUsageResult,
+  RecentUsageRow,
+  RoutingMode,
+  UsageSummary,
+} from './types';
+
+/* ── Phase 2 routing helpers (design §7.1/§7.3, contradiction C6) ───────
+   In per-user mode the ledger stops gaining 'consume' rows, so deriving the
+   dashboard from /api/credits would silently flatline. The live client must
+   branch on routingMode: per-user → GET /api/usage/summary (built server-side
+   from key_usage_daily rollups); shared → deriveUsage below, unchanged. */
+export function isPerUserMode(mode: RoutingMode | null | undefined): boolean {
+  return mode === 'per_user';
+}
+
+/** §7.1: a stale provider balance is displayable for up to 24h; beyond that
+    the panel must show "balance unavailable" instead of a wrong number. */
+export const BALANCE_STALE_LIMIT_MS = 24 * 3_600_000;
+
+export function isProviderBalanceUnavailable(
+  providerKey: ProviderKeySummary | null | undefined,
+  now = new Date(),
+): boolean {
+  if (!providerKey?.balanceStale) return false;
+  if (!providerKey.balanceObservedAt) return false;
+  const observed = new Date(providerKey.balanceObservedAt).getTime();
+  if (Number.isNaN(observed)) return false;
+  return now.getTime() - observed > BALANCE_STALE_LIMIT_MS;
+}
+
+/** Normalise a raw GET /api/usage/recent payload. Defensive by design: the
+    provider hard-caps at 30 rows, so anything beyond 30 is dropped, and
+    malformed rows are skipped rather than crashing the History screen. */
+export function mapRecentUsage(raw: unknown): RecentUsageResult {
+  const body = (raw ?? {}) as { rows?: unknown; totalRequests?: unknown; windowNote?: unknown };
+  const rowsIn = Array.isArray(body.rows) ? body.rows : [];
+  const rows: RecentUsageRow[] = [];
+  for (const r of rowsIn.slice(0, 30)) {
+    const row = r as Partial<RecentUsageRow>;
+    if (typeof row?.model !== 'string' || typeof row?.createdAt !== 'string') continue;
+    rows.push({
+      model: row.model,
+      inputTokens: Number(row.inputTokens) || 0,
+      outputTokens: Number(row.outputTokens) || 0,
+      cachedTokens: Number(row.cachedTokens) || 0,
+      costTokens: Number(row.costTokens) || 0,
+      fast: row.fast === true,
+      status: typeof row.status === 'string' ? row.status : 'success',
+      createdAt: row.createdAt,
+    });
+  }
+  return {
+    rows,
+    totalRequests: Number(body.totalRequests) || rows.length,
+    windowNote: typeof body.windowNote === 'string' ? body.windowNote : 'recent_30',
+  };
+}
+
+/** Masked key hint for display: '•••• 9f3k'. Only last-4 ever exists client-side. */
+export function maskedKeyHint(keyLast4: string | null | undefined): string | null {
+  if (!keyLast4) return null;
+  const last4 = keyLast4.replace(/^…+/, '').slice(-4);
+  return last4 ? `•••• ${last4}` : null;
+}
 
 /* Derive dashboard aggregates from /api/credits ledger rows (live mode).
    Only 'consume' rows (deltaTokens < 0) count as usage. Balance itself is

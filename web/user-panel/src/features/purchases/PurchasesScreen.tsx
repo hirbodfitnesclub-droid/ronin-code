@@ -72,6 +72,17 @@ function ClaimRow({ claim }: { claim: Claim }) {
       {claim.status === 'approved' && claim.reviewedAt ? (
         <div className="purchases-note">{fmtDate(claim.reviewedAt)}</div>
       ) : null}
+      {/* Phase 2 (§7.2): issuance state of the provider key for this purchase.
+          needs_attention is shown as reassurance, never as an error. */}
+      {claim.status === 'approved' && claim.issuanceState === 'confirmed' ? (
+        <div className="purchases-note purchases-issuance-ok">{t('purchases.issuanceConfirmed')}</div>
+      ) : null}
+      {claim.status === 'approved' && claim.issuanceState === 'pending' ? (
+        <div className="purchases-note">{t('purchases.issuancePending')}</div>
+      ) : null}
+      {claim.status === 'approved' && claim.issuanceState === 'needs_attention' ? (
+        <div className="purchases-note purchases-issuance-attention">{t('purchases.issuanceAttention')}</div>
+      ) : null}
       {claim.status === 'rejected' ? (
         <div className="purchases-reject">
           <span className="purchases-reject-label">{t('purchases.rejectReason')}:</span>

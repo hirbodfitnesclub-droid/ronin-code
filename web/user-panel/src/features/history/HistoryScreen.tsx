@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Card, EmptyState, Spinner } from '../../components/ui';
 import { api, isApiError, type CreditsResult, type LedgerKind, type LedgerRow } from '../../lib/api';
 import { ERROR_CODE_KEYS, useLang, type LangCtx, type StringKey } from '../../lib/i18n';
+import { RecentActivity } from './RecentActivity';
 import './history.css';
 
 type Filter = 'all' | 'consume' | 'purchase';
@@ -167,6 +168,7 @@ export function HistoryScreen() {
 
   return (
     <div>
+      <RecentActivity />
       <Card>
         <h1 className="page-title">{t('history.title')}</h1>
         {data === null && !error ? (

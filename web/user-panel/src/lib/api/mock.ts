@@ -7,7 +7,9 @@ import {
   MOCK_DEVICES,
   MOCK_LEDGER,
   MOCK_PACKS,
-  MOCK_USAGE,
+  MOCK_PROVIDER_KEY,
+  MOCK_RECENT_USAGE,
+  MOCK_USAGE_PER_USER,
   MOCK_USER,
 } from './fixtures';
 import type {
@@ -21,6 +23,7 @@ import type {
   OtpVerifyResult,
   PacksResult,
   PanelApi,
+  RecentUsageResult,
   Session,
   UsageSummary,
   User,
@@ -93,6 +96,8 @@ export class MockApiClient implements PanelApi {
       balanceTokens: MOCK_BALANCE,
       spendableTokens: MOCK_BALANCE,
       isAdminPhone: false,
+      routingMode: 'per_user',
+      providerKey: { ...MOCK_PROVIDER_KEY, balanceObservedAt: new Date().toISOString() },
     };
   }
 
@@ -119,12 +124,13 @@ export class MockApiClient implements PanelApi {
       isActive: true,
       balanceTokens: MOCK_BALANCE,
       spendableTokens: MOCK_BALANCE,
-      lots: [
-        { id: 'lot-1', tokensLeft: MOCK_BALANCE, expiresAt: new Date(Date.now() + 52 * 86_400_000).toISOString() },
-      ],
+      // Per-user mode (§7.1): lots are no longer the spendability source.
+      lots: [],
       deviceAuthorized: true,
       activeDevices: 2,
       serverTime: new Date().toISOString(),
+      routingMode: 'per_user',
+      providerKey: { ...MOCK_PROVIDER_KEY, balanceObservedAt: new Date().toISOString() },
     };
   }
 
@@ -137,7 +143,14 @@ export class MockApiClient implements PanelApi {
     await delay();
     this.requireSession();
     // Purchases screen must NOT use these embedded orders — it uses listClaims().
-    return { balanceTokens: MOCK_BALANCE, spendableTokens: MOCK_BALANCE, ledger: MOCK_LEDGER, orders: [] };
+    return {
+      balanceTokens: MOCK_BALANCE,
+      spendableTokens: MOCK_BALANCE,
+      ledger: MOCK_LEDGER,
+      orders: [],
+      routingMode: 'per_user',
+      providerKey: { ...MOCK_PROVIDER_KEY, balanceObservedAt: new Date().toISOString() },
+    };
   }
 
   async devices(): Promise<Device[]> {
@@ -190,7 +203,14 @@ export class MockApiClient implements PanelApi {
   async usageSummary(): Promise<UsageSummary> {
     await delay();
     this.requireSession();
-    return MOCK_USAGE;
+    // Mock user is in per-user mode: summary comes from rollups (§7.3).
+    return MOCK_USAGE_PER_USER;
+  }
+
+  async recentUsage(): Promise<RecentUsageResult | null> {
+    await delay();
+    this.requireSession();
+    return MOCK_RECENT_USAGE;
   }
 
   async issueHandoff(): Promise<HandoffResult> {

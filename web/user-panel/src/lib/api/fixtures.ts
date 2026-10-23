@@ -1,4 +1,14 @@
-import type { Claim, Device, LedgerRow, Pack, ShopCard, UsageSummary, User } from './types';
+import type {
+  Claim,
+  Device,
+  LedgerRow,
+  Pack,
+  ProviderKeySummary,
+  RecentUsageResult,
+  ShopCard,
+  UsageSummary,
+  User,
+} from './types';
 
 /* Mock fixtures — ONE consistent identity echoing the design boards. */
 export const MOCK_USER: User = {
@@ -182,6 +192,7 @@ export const MOCK_CLAIMS: Claim[] = [
     hasReceipt: true,
     createdAt: iso(6),
     reviewedAt: iso(6, 3),
+    issuanceState: 'confirmed',
   },
   {
     id: 'claim-3',
@@ -203,6 +214,94 @@ export const MOCK_DEVICES: Device[] = [
   { id: 'dev-2', name: 'MacBook Pro', createdAt: iso(25), lastSeenAt: iso(1, 8), active: true },
   { id: 'dev-3', name: 'iPhone 14', createdAt: iso(10), lastSeenAt: iso(3, 9), active: false },
 ];
+
+/* Phase-2 per-user fixtures. FAKE key hint only — the mock never holds a real
+   key; the panel only ever receives a last-4 hint (design §2.3/§7). The fake
+   delegated key used in QA notes is sk-ronin-test…9f3k (never a real value). */
+export const MOCK_PROVIDER_KEY: ProviderKeySummary = {
+  status: 'active',
+  tokenLimitIssued: 50_000_000,
+  balanceStale: false,
+  balanceObservedAt: new Date(now - 30_000).toISOString(),
+  keyLast4: '9f3k',
+};
+
+export const MOCK_RECENT_USAGE: RecentUsageResult = {
+  totalRequests: 47,
+  windowNote: 'recent_30',
+  rows: [
+    {
+      model: 'claude-sonnet',
+      inputTokens: 4_120,
+      outputTokens: 1_860,
+      cachedTokens: 512,
+      costTokens: 8_420,
+      fast: false,
+      status: 'success',
+      createdAt: iso(0, 2),
+    },
+    {
+      model: 'gpt-5-codex',
+      inputTokens: 6_300,
+      outputTokens: 2_410,
+      cachedTokens: 0,
+      costTokens: 15_900,
+      fast: true,
+      status: 'success',
+      createdAt: iso(0, 5),
+    },
+    {
+      model: 'deepseek-v4.1-flash',
+      inputTokens: 9_800,
+      outputTokens: 3_020,
+      cachedTokens: 1_024,
+      costTokens: 4_210,
+      fast: false,
+      status: 'success',
+      createdAt: iso(1, 4),
+    },
+    {
+      model: 'claude-sonnet',
+      inputTokens: 12_450,
+      outputTokens: 4_980,
+      cachedTokens: 2_048,
+      costTokens: 42_000,
+      fast: false,
+      status: 'success',
+      createdAt: iso(1, 7),
+    },
+    {
+      model: 'gpt-5-codex',
+      inputTokens: 3_150,
+      outputTokens: 940,
+      cachedTokens: 0,
+      costTokens: 6_730,
+      fast: false,
+      status: 'success',
+      createdAt: iso(2, 3),
+    },
+  ],
+};
+
+/** Per-user summary (§7.3): same shape as MOCK_USAGE but rollup-sourced, with
+    one partial day in range so the lower-bound footnote is exercised. */
+export const MOCK_USAGE_PER_USER: UsageSummary = {
+  todayTokens: 24_320,
+  monthTokens: 621_450,
+  last7Days: [6, 5, 4, 3, 2, 1]
+    .map((d, i) => ({
+      date: iso(d).slice(0, 10),
+      tokens: [88_400, 132_700, 64_200, 151_900, 97_500, 62_430][i] ?? 0,
+    }))
+    .concat([{ date: iso(0).slice(0, 10), tokens: 24_320 }]),
+  topModels: [
+    { model: 'claude-sonnet', tokens: 312_400, multiplier: 1 },
+    { model: 'gpt-5-codex', tokens: 198_750, multiplier: 0.5 },
+    { model: 'deepseek-v4.1-flash', tokens: 110_300, multiplier: 0.1 },
+  ],
+  hasPartialDays: true,
+  partialDates: [iso(2).slice(0, 10)],
+};
 
 export const MOCK_USAGE: UsageSummary = {
   todayTokens: 24_320,
