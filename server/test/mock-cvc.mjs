@@ -23,7 +23,10 @@ export function startMockCvc() {
     lastChatAuth: null,
     lastChatBody: null,
     poolBalance: 1_000_000_000,
-    faults: { createAmbiguous: 0, editAmbiguous: 0, createDrop: 0 },
+    faults: { createAmbiguous: 0, editAmbiguous: 0, createDrop: 0, create500: 0, balance503: 0, chatHangClose: 0, chatStream402: 0 },
+    chatAuths: [],
+    editLog: [],
+    slowStream: false,
     counter: 0,
   };
   const primaryRec = {
@@ -73,6 +76,10 @@ export function startMockCvc() {
       if (url.pathname === '/v1/keys' && req.method === 'POST') {
         state.calls.create++;
         if (key !== MOCK_PRIMARY) return err(res, 403, 'not_primary');
+        if (state.faults.create500 > 0) { // 500 BEFORE commit — nothing is created provider-side
+          state.faults.create500--;
+          return err(res, 500, 'internal_error');
+        }
         if (!Number.isInteger(body.token_limit) || body.token_limit <= 0) return err(res, 400, 'invalid_token_limit');
         state.counter++;
         const plaintext = `sk-ronin-test-${state.counter}-${Math.random().toString(36).slice(2, 10)}`;
@@ -101,6 +108,7 @@ export function startMockCvc() {
         if (key !== MOCK_PRIMARY) return err(res, 403, 'not_primary');
         const target = state.keys.get(body.key);
         if (!target) return err(res, 404, 'key_not_found');
+        state.editLog.push({ name: target.name, fields: Object.keys(body).filter((k) => k !== 'key') });
         // Apply the mutation (validation per contract §4/§5/§6)
         let applyErr = null;
         if (body.delete === true) {
@@ -137,6 +145,10 @@ export function startMockCvc() {
       if (url.pathname === '/v1/balance' && req.method === 'GET') {
         state.calls.balance++;
         if (!rec) return err(res, 401, 'invalid_key');
+        if (state.faults.balance503 > 0) {
+          state.faults.balance503--;
+          return err(res, 503, 'temporarily_unavailable');
+        }
         return send(res, 200, { balance: balanceOf(rec) });
       }
 
@@ -150,8 +162,19 @@ export function startMockCvc() {
         state.calls.chat++;
         state.lastChatAuth = req.headers.authorization;
         state.lastChatBody = body;
+        state.chatAuths.push(req.headers.authorization);
+        if (state.faults.chatHangClose > 0) { // hang briefly, then close with no response at all
+          state.faults.chatHangClose--;
+          await new Promise((r) => setTimeout(r, 250));
+          res.socket.destroy();
+          return;
+        }
         if (!rec) return err(res, 401, 'invalid_key');
         if (!rec.is_active) return err(res, 403, 'key_inactive');
+        if (body.stream && state.faults.chatStream402 > 0) { // allowance dies at stream start
+          state.faults.chatStream402--;
+          return err(res, 402, 'allowance_exhausted');
+        }
         if (!rec.is_primary && rec.token_limit !== null && rec.tokens_used >= rec.token_limit) {
           return err(res, 402, 'allowance_exhausted');
         }
@@ -162,6 +185,21 @@ export function startMockCvc() {
           input_tokens: 100, output_tokens: 50, cached_tokens: 0, cost_tokens: cost,
           latency_ms: 42, status: 'success', error_message: '', created_at: new Date().toISOString(),
         });
+        if (body.stream) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+          const chunks = ['mock reply', ' (continued)', ''];
+          for (let i = 0; i < chunks.length; i++) {
+            const evt = {
+              id: 'chatcmpl-mock', object: 'chat.completion.chunk', model: body.model,
+              choices: [{ index: 0, delta: { content: chunks[i] }, finish_reason: i === chunks.length - 1 ? 'stop' : null }],
+              ...(i === chunks.length - 1 ? { usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } } : {}),
+            };
+            res.write(`data: ${JSON.stringify(evt)}\n\n`);
+            if (state.slowStream) await new Promise((r) => setTimeout(r, 350));
+          }
+          res.end('data: [DONE]\n\n');
+          return;
+        }
         return send(res, 200, {
           id: 'chatcmpl-mock', object: 'chat.completion', model: body.model,
           choices: [{ index: 0, message: { role: 'assistant', content: 'mock reply' }, finish_reason: 'stop' }],
