@@ -1,5 +1,8 @@
 // Admin API client — same origin, cookie session, CSRF header on mutations.
 // Contract: errors are { error: { code, message } }.
+import type { ProviderIntent, ProviderKeyDetail, ResolveDecision } from './providerKey';
+
+export type { ProviderIntent, ProviderKeyDetail, ResolveDecision } from './providerKey';
 
 export interface Session {
   phone: string;
@@ -265,6 +268,23 @@ export const api = {
     post<{ ok: boolean; devices: Device[] }>(
       `/admin-api/users/${encodeURIComponent(id)}/devices/${encodeURIComponent(deviceId)}/revoke`,
     ),
+  /* Phase 2 provider keys (§7.4/§3.5). Reads: cap finance_user (enforced
+     server-side). Freeze/unfreeze: cap risk_manage. Resolution: owner-only.
+     Freeze/unfreeze endpoints insert durable intents server-side — they do
+     NOT call the provider inline (design §3.1 rule). */
+  providerKey: (id: string) =>
+    get<{ providerKey: ProviderKeyDetail }>(`/admin-api/users/${encodeURIComponent(id)}/provider-key`),
+  refreshProviderKey: (id: string) =>
+    post<{ providerKey: ProviderKeyDetail }>(`/admin-api/users/${encodeURIComponent(id)}/provider-key/refresh`),
+  freezeProviderKey: (id: string) =>
+    post<{ ok: boolean; intent: ProviderIntent }>(`/admin-api/users/${encodeURIComponent(id)}/provider-key/freeze`),
+  unfreezeProviderKey: (id: string) =>
+    post<{ ok: boolean; intent: ProviderIntent }>(`/admin-api/users/${encodeURIComponent(id)}/provider-key/unfreeze`),
+  providerAttentionIntents: () =>
+    get<{ intents: ProviderIntent[] }>('/admin-api/provider/intents?state=needs_attention'),
+  resolveProviderIntent: (intentId: string, decision: ResolveDecision) =>
+    post<{ intent: ProviderIntent }>(`/admin-api/provider/intents/${encodeURIComponent(intentId)}/resolve`, { decision }),
+
   userRiskFlags: (id: string) => get<{ flags: RiskFlag[] }>(`/admin-api/users/${encodeURIComponent(id)}/risk-flags`),
   createRiskFlag: (id: string, kind: string, note: string) =>
     post<{ flag: RiskFlag }>(`/admin-api/users/${encodeURIComponent(id)}/risk-flags`, { kind, note }),

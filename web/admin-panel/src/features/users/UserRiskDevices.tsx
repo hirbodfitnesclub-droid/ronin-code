@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Device, type RiskFlag } from '../../lib/api';
+import { isProviderRiskKind, riskKindLabel } from '../../lib/providerKey';
 import { formatDateTime } from '../../lib/format';
 import { Card, ErrorBox, Field, OkBox, StatusBadge, errText } from '../../components/ui/primitives';
 
@@ -130,7 +131,13 @@ export default function UserRiskDevices({ userId }: { userId: string }) {
                 <tbody>
                   {flags.map((f) => (
                     <tr key={f.id}>
-                      <td>{f.kind}</td>
+                      <td>
+                        {isProviderRiskKind(f.kind) && f.status === 'open' ? (
+                          <span className="badge badge-warn">{riskKindLabel(f.kind)}</span>
+                        ) : (
+                          riskKindLabel(f.kind)
+                        )}
+                      </td>
                       <td>{f.note ?? '—'}</td>
                       <td>
                         <StatusBadge status={f.status} />
