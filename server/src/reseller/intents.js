@@ -16,6 +16,26 @@ export function kickWorker() {
   Promise.resolve().then(() => kickFn()).catch((e) => log.warn('reseller_kick_failed', { error: e.message }));
 }
 
+/**
+ * Inline processor registry (Workstream B — Vercel topology): where no
+ * resident worker exists, the request that created an intent drains it
+ * synchronously via the registered processor (the Vercel function entry
+ * registers a bounded worker drain). On the Node server NOTHING registers
+ * here — the resident worker + kick cover it — so this stays a no-op.
+ * A processor failure must NEVER fail the caller's request: the intent
+ * remains pending/needs_attention for the sweep/retry safety net.
+ */
+let inlineProcessor = null;
+export function registerInlineProcessor(fn) { inlineProcessor = fn ?? null; }
+export async function processInlineIntents(userId) {
+  if (!inlineProcessor) return;
+  try {
+    await inlineProcessor(userId);
+  } catch (e) {
+    log.warn('reseller_inline_process_failed', { error: e.message });
+  }
+}
+
 export async function ensureKeyShell(db, userId) {
   const existing = await getKeyRow(db, userId);
   if (existing) return existing;

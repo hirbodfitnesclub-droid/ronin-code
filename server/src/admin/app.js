@@ -16,7 +16,7 @@ import { registerFinanceRoutes } from './finance.js';
 import { registerAnalyticsRoutes } from './analytics.js';
 import { registerProviderRoutes } from './provider.js';
 import { getKeyRow } from '../reseller/routing.js';
-import { ensureMirrorIntent } from '../reseller/intents.js';
+import { ensureMirrorIntent, processInlineIntents } from '../reseller/intents.js';
 import { ensureConversionIntent } from '../reseller/conversion.js';
 
 const ADMIN_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -29,9 +29,11 @@ const MIME = {
 };
 
 /**
- * The STANDALONE admin application: its own HTTP server (ADMIN_PORT), its own
- * login, its own session domain (admin_sessions + ronin_admin cookie +
- * per-session CSRF token). Nothing here is reachable through the user API.
+ * The STANDALONE admin application: its own login, its own session domain
+ * (admin_sessions + ronin_admin cookie + per-session CSRF token). Nothing
+ * here is reachable through the user API. createAdminHandler returns the
+ * raw (req, res) handler (used directly by the Vercel function entry);
+ * createAdminApp wraps it in an HTTP server (ADMIN_PORT) for Node hosting.
  *
  * Access model (PRD §6.1, Liro capability staff): OWNER = phone in
  * ADMIN_PHONES (all capabilities, claim approval, staff editing, audit);
@@ -42,7 +44,7 @@ const MIME = {
  * The React console (web/admin-panel) is served from its Vite build output;
  * money mutations go through the SECURITY DEFINER RPCs only.
  */
-export function createAdminApp(db, cfg, sms) {
+export function createAdminHandler(db, cfg, sms) {
   const storage = createStorage(cfg);
   const router = createRouter();
   const guard = async (req, { mutate = false } = {}) => {
@@ -196,6 +198,7 @@ export function createAdminApp(db, cfg, sms) {
         }
       }
     }
+    await processInlineIntents(user.id);
     sendJson(res, 200, { ok: true, isActive: active, intentId: intent ? Number(intent.id) : null });
   });
 
@@ -222,6 +225,7 @@ export function createAdminApp(db, cfg, sms) {
         amountTokens: Math.abs(tokens), actor: `admin:${session.phone}`,
       });
     }
+    await processInlineIntents(user.id);
     sendJson(res, 200, { ok: true, balanceTokens: balanceAfter });
   });
 
@@ -364,6 +368,7 @@ export function createAdminApp(db, cfg, sms) {
       if (order.status === 'approved') void sms.sendPackageActivated(user.phone, grantedTokens, order.pack_title);
       else if (order.status === 'rejected') void sms.sendOrderRejected(user.phone, order.reject_reason);
     }
+    await processInlineIntents(order.user_id);
     const dupCounts = await duplicateFlags([order]);
     sendJson(res, 200, {
       order: publicOrderAdmin(order, dupCounts), grantedTokens,
@@ -391,9 +396,11 @@ export function createAdminApp(db, cfg, sms) {
     const rf = r.refund;
     // Phase 2 mirror (§4.5): provider reduce intent for tokensRemoved
     // (idempotent absolute op — safe to retry in the worker).
+    let refundUserId = null;
     if (!r.replayed && Number(r.tokensRemoved) > 0) {
       const ord = await getOrder(db, Number(params.id));
       if (ord) {
+        refundUserId = ord.user_id;
         await ensureMirrorIntent(db, cfg, {
           userId: ord.user_id, kind: 'reduce', source: 'refund',
           refundId: Number(rf.id), idempotencyKey: `refund:${rf.id}`,
@@ -401,6 +408,11 @@ export function createAdminApp(db, cfg, sms) {
         });
       }
     }
+    if (!refundUserId) {
+      const ord = await getOrder(db, Number(params.id));
+      if (ord) refundUserId = ord.user_id;
+    }
+    if (refundUserId) await processInlineIntents(refundUserId);
     sendJson(res, 200, {
       replayed: Boolean(r.replayed),
       tokensRemoved: Number(r.tokensRemoved),
@@ -554,5 +566,17 @@ export function createAdminApp(db, cfg, sms) {
     }
     return null;
   });
+  return handler;
+}
+
+/**
+ * The standalone admin application as an HTTP server (local / Node hosting):
+ * wraps createAdminHandler and serves the panel build output from dist
+ * (the static fallthrough lives in the handler and is inert where no dist
+ * exists — e.g. the Vercel function, which serves statics at the platform
+ * layer and only ever receives /admin-api/* requests).
+ */
+export function createAdminApp(db, cfg, sms) {
+  const handler = createAdminHandler(db, cfg, sms);
   return http.createServer((req, res) => { void handler(req, res, {}); });
 }
