@@ -1,0 +1,65 @@
+# Ronin Code API — Fly.io deployment (two processes, one app).
+#   fly launch --no-deploy --name ronin-api   (once, under the owner's account)
+#   fly secrets set DATABASE_URL=... SUPABASE_AUTH_URL=... (full list in server/.env.example / config.js)
+#   fly deploy
+# Panels then get VITE_API_BASE_URL=https://ronin-api.fly.dev (user) and the
+# admin service URL below; Supabase Auth "Send SMS" hook URL must point at
+# https://ronin-api.fly.dev/hooks/send-sms.
+
+app = "ronin-api"
+primary_region = "fra"
+kill_signal = "SIGINT"
+kill_timeout = "10s"
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "7443"
+  ADMIN_PORT = "7444"
+
+[processes]
+  api = "node src/server.js"
+  admin = "node src/admin-main.js"
+
+[[services]]
+  processes = ["api"]
+  internal_port = 7443
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    type = "http"
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+[[services]]
+  processes = ["admin"]
+  internal_port = 7444
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 8080
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 8443

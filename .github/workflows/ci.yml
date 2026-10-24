@@ -34,5 +34,11 @@ jobs:
         run: npm --prefix host run test:unit
       - name: Host E2E (mock provider — trust layer, router, plan, ideas)
         run: node host/test/e2e.mjs
+      - name: Provision GoTrue binary (server tests)
+        run: |
+          mkdir -p server/tools
+          curl -fsSL "https://github.com/supabase/auth/releases/download/v2.197.0/auth-v2.197.0-amd64.tar.xz" | tar -xJ -C /tmp
+          install -m 0755 /tmp/auth server/tools/auth
+          echo "c66b5efc816ccf3e13c24022bdefd5c6a9bea1fd1a1aeb9c586e1279c75a6306  server/tools/auth" | sha256sum -c -
       - name: Server tests (auth, ledger, claims, metering)
         run: npm --prefix server test
