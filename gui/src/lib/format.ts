@@ -13,6 +13,14 @@ export function formatNumber(n: number, locale: string): string {
   return new Intl.NumberFormat(locale).format(n);
 }
 
+/** Elapsed time as m:ss (0:07, 1:23, 12:05) — real measured durations only. */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 /** Compact token counts: 950 → '950', 12_400 → '12.4K', 20_000_000 → '20M'. */
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n)) return '0';

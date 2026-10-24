@@ -20,6 +20,11 @@ interface Props {
 export default function ChatPanel({ chat, mode, enabledModels, panelUrl, onOpenStarters, onOpenProject }: Props) {
   const { t } = useLang();
   const isEmpty = chat.items.length === 0 && !chat.running;
+  /* Retry is offered only on the newest error and only while idle —
+     resending replays the last prompt. */
+  const lastItem = chat.items[chat.items.length - 1];
+  const retryItemId =
+    !chat.running && lastItem?.kind === 'message' && lastItem.role === 'error' ? lastItem.id : null;
   const openPanel = () => {
     if (panelUrl) window.open(panelUrl, '_blank', 'noopener');
   };
@@ -38,7 +43,10 @@ export default function ChatPanel({ chat, mode, enabledModels, panelUrl, onOpenS
             items={chat.items}
             mode={mode}
             running={chat.running}
+            turnStartedAt={chat.turnStartedAt}
             activities={chat.activities}
+            retryItemId={retryItemId}
+            onRetry={chat.retryLast}
             onUndo={chat.undoChanges}
             onDecide={chat.decideApproval}
             onApprovePlan={chat.approvePlan}

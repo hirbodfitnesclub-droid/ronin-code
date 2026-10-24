@@ -16,6 +16,7 @@ interface Props {
   undone: boolean;
   costUsd?: number;
   costEstimated?: boolean;
+  durationMs?: number;
 }
 
 function DiffBlock({ file }: { file: DiffFile }) {

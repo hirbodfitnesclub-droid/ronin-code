@@ -12,6 +12,7 @@ export type TimelineItem =
       undone: boolean;
       costUsd?: number;
       costEstimated?: boolean;
+      durationMs?: number;
     }
   | {
       kind: 'approval';

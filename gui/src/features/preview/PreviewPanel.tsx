@@ -1,9 +1,13 @@
+import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../../lib/i18n';
 import Logo from '../../components/ui/Logo';
 
-/* Ronin Code — live preview panel: browser chrome + iframe of the
-   project's /preview/ route, or the branded empty state. Collapses to
-   a slim reopen tab. */
+/* Ronin Code — live preview panel (RDX-04): mini-browser chrome
+   (back / forward / refresh + the /preview/ address) over the
+   project's preview iframe, a skeleton while it loads, and the
+   branded empty state when no project is open. Back/forward drive
+   the iframe's own history (same-origin, so it really works).
+   No fake window controls are drawn — the Tauri shell owns the frame. */
 
 interface Props {
   open: boolean;
@@ -15,6 +19,22 @@ interface Props {
 
 export default function PreviewPanel(p: Props) {
   const { t } = useLang();
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  /* A new preview key (or a different project) means a fresh load. */
+  useEffect(() => {
+    setLoaded(false);
+  }, [p.previewKey, p.project]);
+
+  const historyGo = (delta: number) => {
+    try {
+      frameRef.current?.contentWindow?.history.go(delta);
+    } catch {
+      /* cross-origin safety — the preview is same-origin by design */
+    }
+  };
+
   if (!p.open) {
     return (
       <button
@@ -31,10 +51,27 @@ export default function PreviewPanel(p: Props) {
   return (
     <section className="preview-panel" aria-label="Live preview">
       <div className="preview-bar">
-        <span className="preview-dots" aria-hidden="true">
-          <i />
-          <i />
-          <i />
+        <span className="preview-nav">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => historyGo(-1)}
+            disabled={!p.project}
+            aria-label={t('preview.back')}
+            title={t('preview.back')}
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => historyGo(1)}
+            disabled={!p.project}
+            aria-label={t('preview.forward')}
+            title={t('preview.forward')}
+          >
+            ›
+          </button>
         </span>
         <span className="preview-url" dir="ltr">
           /preview/
@@ -62,13 +99,28 @@ export default function PreviewPanel(p: Props) {
       </div>
       <div className="preview-frame-wrap">
         {p.project ? (
-          <iframe
-            key={p.previewKey}
-            className="preview-frame"
-            src={`/preview/?ronin_preview=${p.previewKey}`}
-            title="Project preview"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-          />
+          <>
+            {!loaded && (
+              <div className="preview-skeleton" aria-hidden="true">
+                <div className="preview-skeleton-bar" />
+                <div className="preview-skeleton-hero" />
+                <div className="preview-skeleton-lines">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
+            )}
+            <iframe
+              ref={frameRef}
+              key={p.previewKey}
+              className="preview-frame"
+              src={`/preview/?ronin_preview=${p.previewKey}`}
+              title="Project preview"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              onLoad={() => setLoaded(true)}
+            />
+          </>
         ) : (
           <div className="preview-empty">
             <div className="preview-empty-orb" aria-hidden="true">

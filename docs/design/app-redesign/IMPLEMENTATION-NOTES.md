@@ -99,3 +99,41 @@ reference only. GUI only — no host/server/web changes.
   polling is additive to the existing deep-link path, not a replacement.
 
 **Gates**: `npm run typecheck` ✓ · `npm test` 31/31 ✓ · `npm run build` ✓
+
+---
+
+## Phase 3 — Workspace (RDX-04) + Modes (RDX-05)
+
+**Built**
+- Timeline: clear hierarchy kept; assistant answers over ~600 chars collapse
+  behind show more/less; errors render as human **error cards** with a
+  **Retry** button (newest error only, while idle) that resends the last
+  prompt (`lastPromptRef` in useChat). Raw-HTML payloads still can never
+  render as content.
+- Activity: the visual stage now sits in a compact **task card** sized for
+  the 480–640px chat column (orb 104px → 62px, motif min-height 118px →
+  74px) with a live **elapsed clock** — real measured time, still zero text
+  status lines. Turn duration is measured client-side (start → finish) and
+  stored on the changes item for the summary card.
+- Composer reordered to board 08: textarea + send on top, model/effort/Fast
+  toolbar below.
+- Preview: mini-browser chrome — **back/forward that really drive the
+  iframe's history** (same-origin), refresh, `/preview/` address; a
+  shimmer **skeleton** until the iframe loads; branded empty state kept.
+  The three decorative dots in the old preview bar are **removed** (they
+  read as macOS window controls, which the PRD forbids).
+- Approvals: PRD copy — «اجازه می‌دهم» / «نه» (EN: Allow / No).
+- Idea panel and Plan checklist already matched the mode boards; they
+  inherit the density pass. Auto's persistent banner shipped in Phase 1.
+
+**Deviations**
+- *Composer Stop button* (board 08): the host has **no turn-cancel
+  endpoint** — a Stop would be decorative. Send stays disabled while a
+  turn runs. API gap for the host backlog.
+- *Composer attach button* (board 08): `startTurn` has no attachment
+  channel — omitted rather than faked. API gap.
+- *Per-step activity durations*: SSE activity events carry no timestamps;
+  the card shows the one honest number available — total turn elapsed —
+  instead of inventing per-step times.
+
+**Gates**: `npm run typecheck` ✓ · `npm test` 32/32 ✓ · `npm run build` ✓

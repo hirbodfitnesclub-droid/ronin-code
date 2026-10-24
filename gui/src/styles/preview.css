@@ -5,9 +5,9 @@
   height: 36px; flex: none; display: flex; align-items: center; gap: 10px;
   padding: 0 8px 0 12px; border-bottom: 1px solid var(--border);
 }
-.preview-dots { display: inline-flex; gap: 6px; }
-.preview-dots i { width: 9px; height: 9px; border-radius: 50%; background: #2b2f38; display: block; }
-.preview-dots i:first-child { background: rgba(229, 72, 77, 0.55); }
+.preview-nav { display: inline-flex; gap: 2px; }
+html[dir='rtl'] .preview-nav .icon-btn { transform: scaleX(-1); }
+.preview-nav .icon-btn:disabled { opacity: 0.35; cursor: default; }
 .preview-url {
   flex: 1; color: var(--text-faint); font-family: var(--font-mono); font-size: 11.5px;
   background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border);
@@ -45,3 +45,24 @@
   width: 26px; height: 64px; font-size: 18px;
 }
 .preview-reopen:hover { color: var(--text); background: var(--bg-hover); }
+
+/* RDX-04 — preview loading skeleton */
+.preview-skeleton {
+  position: absolute; inset: 0; z-index: 2;
+  background: var(--bg-panel);
+  padding: 22px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.preview-skeleton-bar, .preview-skeleton-hero, .preview-skeleton-lines span {
+  border-radius: 8px;
+  background: linear-gradient(100deg, var(--bg-raised) 40%, var(--bg-hover) 50%, var(--bg-raised) 60%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s linear infinite;
+}
+.preview-skeleton-bar { height: 14px; width: 46%; }
+.preview-skeleton-hero { height: 150px; }
+.preview-skeleton-lines { display: flex; flex-direction: column; gap: 9px; }
+.preview-skeleton-lines span { height: 11px; }
+.preview-skeleton-lines span:nth-child(2) { width: 82%; }
+.preview-skeleton-lines span:nth-child(3) { width: 64%; }
+@keyframes skeletonShimmer { from { background-position: 120% 0; } to { background-position: -80% 0; } }

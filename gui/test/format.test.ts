@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { interpolate, formatNumber, formatUsd } from '../src/lib/format.ts';
+import { interpolate, formatElapsed, formatNumber, formatUsd } from '../src/lib/format.ts';
 
 test('interpolate replaces placeholders', () => {
   assert.equal(interpolate('Hi {name}', { name: 'Ronin' }), 'Hi Ronin');
@@ -25,4 +25,12 @@ test('formatUsd: 2dp normally, 4dp for sub-10-cent amounts', () => {
   assert.equal(formatUsd(0, 'en-US'), '$0.00');
   assert.equal(formatUsd(0.0001, 'en-US'), '$0.0001');
   assert.equal(formatUsd(0.0625, 'en-US'), '$0.0625');
+});
+
+test('formatElapsed renders m:ss', () => {
+  assert.equal(formatElapsed(0), '0:00');
+  assert.equal(formatElapsed(7_400), '0:07');
+  assert.equal(formatElapsed(83_000), '1:23');
+  assert.equal(formatElapsed(725_000), '12:05');
+  assert.equal(formatElapsed(-5), '0:00');
 });

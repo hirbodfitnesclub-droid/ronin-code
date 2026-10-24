@@ -3,8 +3,11 @@ import type { CatalogModel } from '../../lib/catalog';
 import { useLang } from '../../lib/i18n';
 import ModelPicker from './ModelPicker';
 
-/* Ronin Code — the composer: model-picker toolbar row on top of the
-   auto-growing textarea + send button, all inside one box. */
+/* Ronin Code — the composer (board 08): the auto-growing textarea +
+   send on top, the model/effort/Fast toolbar row below, one box.
+   There is no attach button (no attachment channel exists) and no
+   stop button (the host has no turn-cancel endpoint) — send simply
+   stays disabled while a turn runs. */
 
 interface Props {
   input: string;
@@ -30,18 +33,6 @@ export default function Composer(p: Props) {
   return (
     <div className="composer">
       <div className="composer-box">
-        <ModelPicker
-          enabledModels={p.enabledModels}
-          modelId={p.modelId}
-          activeModel={p.activeModel}
-          effort={p.effort}
-          effortOptions={p.effortOptions}
-          fast={p.fast}
-          fastAvailable={p.fastAvailable}
-          onSelectModel={p.onSelectModel}
-          onEffortChange={p.onEffortChange}
-          onFastChange={p.onFastChange}
-        />
         <div className="composer-main">
           <textarea
             ref={p.textareaRef}
@@ -70,6 +61,18 @@ export default function Composer(p: Props) {
             </svg>
           </button>
         </div>
+        <ModelPicker
+          enabledModels={p.enabledModels}
+          modelId={p.modelId}
+          activeModel={p.activeModel}
+          effort={p.effort}
+          effortOptions={p.effortOptions}
+          fast={p.fast}
+          fastAvailable={p.fastAvailable}
+          onSelectModel={p.onSelectModel}
+          onEffortChange={p.onEffortChange}
+          onFastChange={p.onFastChange}
+        />
       </div>
       <p className="composer-hint">{t('app.composerHint')}</p>
     </div>

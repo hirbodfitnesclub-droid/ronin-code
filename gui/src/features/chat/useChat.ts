@@ -63,6 +63,9 @@ export function useChat(opts: ChatOptions) {
   }, []);
 
   const runningRef = useRef(false);
+  const lastPromptRef = useRef<string>('');
+  const turnStartedAtRef = useRef<number | null>(null);
+  const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null);
   const streamingIdRef = useRef<number | null>(null);
   const pendingChangesRef = useRef<ChangedFile[]>([]);
   const pendingUsageRef = useRef<{ costUsd: number; estimated: boolean } | null>(null);
@@ -106,6 +109,11 @@ export function useChat(opts: ChatOptions) {
       setRunning(false);
       setActivities([]);
       streamingIdRef.current = null;
+      /* Real measured turn duration (client clock, turn start → finish). */
+      const startedAt = turnStartedAtRef.current;
+      const durationMs = startedAt ? Date.now() - startedAt : undefined;
+      turnStartedAtRef.current = null;
+      setTurnStartedAt(null);
 
       const files = pendingChangesRef.current;
       pendingChangesRef.current = [];
@@ -136,6 +144,7 @@ export function useChat(opts: ChatOptions) {
               undoing: false,
               undone: false,
               ...(usage ? { costUsd: usage.costUsd, costEstimated: usage.estimated } : {}),
+              ...(durationMs ? { durationMs } : {}),
             },
           ];
         }
@@ -304,6 +313,9 @@ export function useChat(opts: ChatOptions) {
     async (raw?: string) => {
       const prompt = (raw ?? input).trim();
       if (!prompt || runningRef.current) return;
+      lastPromptRef.current = prompt;
+      turnStartedAtRef.current = Date.now();
+      setTurnStartedAt(turnStartedAtRef.current);
       setInput('');
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
       setItems((prev) => [...prev, { kind: 'message', id: id(), role: 'user', text: prompt }]);
@@ -361,6 +373,8 @@ export function useChat(opts: ChatOptions) {
       // The execution runs host-side; consume its stream like a normal turn.
       runningRef.current = true;
       setRunning(true);
+      turnStartedAtRef.current = Date.now();
+      setTurnStartedAt(turnStartedAtRef.current);
       streamingIdRef.current = null;
       pendingChangesRef.current = [];
     } catch (err) {
@@ -396,12 +410,21 @@ export function useChat(opts: ChatOptions) {
   /* Start consuming a turn that was launched elsewhere (Idea build):
      appends the user's message and flips the chat into running state. */
   const beginTurnUi = (promptText: string) => {
+    lastPromptRef.current = promptText;
+    turnStartedAtRef.current = Date.now();
+    setTurnStartedAt(turnStartedAtRef.current);
     setItems((prev) => [...prev, { kind: 'message', id: id(), role: 'user', text: promptText }]);
     pendingChangesRef.current = [];
     streamingIdRef.current = null;
     runningRef.current = true;
     setRunning(true);
   };
+
+  /* Resend the last prompt (error-card retry). */
+  const retryLast = useCallback(() => {
+    const prompt = lastPromptRef.current;
+    if (prompt) void send(prompt);
+  }, [send ]);
 
   return {
     items,
@@ -417,6 +440,8 @@ export function useChat(opts: ChatOptions) {
     fast,
     fastAvailable,
     banner,
+    turnStartedAt,
+    retryLast,
     dismissBanner: () => setBanner(null),
     selectModel,
     setEffort: setEffortPick,

@@ -37,3 +37,29 @@
 .msg--error .msg-bubble {
   background: rgba(229, 72, 77, 0.09); border: 1px solid rgba(229, 72, 77, 0.32); color: var(--error-text);
 }
+
+/* RDX-04 — collapsible long answers + human error cards */
+.msg-collapsible { position: relative; }
+.msg-collapsible--collapsed {
+  max-height: 240px;
+  overflow: hidden;
+  mask-image: linear-gradient(180deg, #000 72%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 72%, transparent 100%);
+}
+.msg-collapsible--collapsed .msg-toggle {
+  position: absolute;
+  bottom: 2px;
+  inset-inline-start: 0;
+}
+.msg-toggle {
+  background: none;
+  border: none;
+  padding: 4px 0 0;
+  color: var(--accent-bright);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.msg-toggle:hover { text-decoration: underline; }
+.error-card p { margin: 0; }
+.error-card-actions { margin-top: 8px; display: flex; gap: 8px; }
