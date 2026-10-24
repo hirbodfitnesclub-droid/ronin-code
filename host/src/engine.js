@@ -68,9 +68,26 @@ export const TOOL_KIND = {
 // USD per 1M tokens. `multiplier` scales consumption (subscription-style
 // accounting, mirrored into cost so expensive models weigh more).
 
-export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, manifest, autoMode, onProgress, state, baseUrl, modelMeta, thinkingLevel, thinkingLevelMap, fast }) {
+// ---------- live-attempt stream watchdog ----------
+// Idle budget for one live engine attempt: no session event for this
+// long means the provider stream has stalled. Seen live (2026-10-24):
+// the turn executed server-side (files written, tokens metered) but
+// turn_done never arrived and no turn_error surfaced either — the
+// prompt promise hung forever with no event to break it. Firing the
+// watchdog aborts the session and surfaces a human timeout turn_error
+// instead of hanging the turn. Tool executions pause the timer: a long
+// tool run legitimately produces no model events, so only a quiet
+// model stream counts as a stall.
+export const ENGINE_IDLE_TIMEOUT_MS = 120_000;
+export const ENGINE_IDLE_TIMEOUT_MESSAGE = "The provider stopped responding mid-turn. Please try again.";
+// Cap on session teardown after a stall: dispose is best-effort and
+// must never re-hang a turn the watchdog already ended.
+const ENGINE_DISPOSE_TIMEOUT_MS = 5_000;
+
+export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, project, manifest, autoMode, onProgress, state, baseUrl, modelMeta, thinkingLevel, thinkingLevelMap, fast, engineModule = null, idleTimeoutMs = ENGINE_IDLE_TIMEOUT_MS }) {
   // Embedded engine — actual installed SDK API (v1.3.0, see ENGINE.md).
-  const engine = await import("@earendil-works/pi-coding-agent");
+  // `engineModule` is a test seam only: production always uses the real SDK.
+  const engine = engineModule ?? await import("@earendil-works/pi-coding-agent");
   const { createAgentSession, SessionManager, SettingsManager, ModelRuntime, DefaultResourceLoader } = engine;
 
   if (providerId === "custom" || providerId === SUBSCRIPTION_PROVIDER_ID) {
@@ -170,8 +187,32 @@ export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, proj
     }
   };
 
+  // Idle watchdog: the prompt promise alone cannot end a stalled
+  // stream, so race it against a timer that only session events
+  // reset. On fire, abort best-effort (never awaited — a stalled
+  // transport may never unwind) and reject with the human timeout
+  // error, which the turn boundary surfaces as turn_error.
+  let idleTimer = null;
+  let idleReject = null;
+  const idlePromise = new Promise((_, reject) => { idleReject = reject; });
+  const disarmIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
+  const armIdle = () => {
+    disarmIdle();
+    if (idleTimeoutMs > 0) {
+      idleTimer = setTimeout(() => {
+        try { Promise.resolve(session.abort()).catch(() => {}); } catch {}
+        const err = new Error(ENGINE_IDLE_TIMEOUT_MESSAGE);
+        err.code = "provider_timeout";
+        idleReject(err);
+      }, idleTimeoutMs);
+    }
+  };
+
   const unsubscribe = session.subscribe((event) => {
     try {
+      // Every session event proves the stream is alive — reset the
+      // stall budget. Tool runs pause it instead (see below).
+      armIdle();
       if (event.type === "message_update") {
         const ame = event.assistantMessageEvent || {};
         if (ame.type === "thinking_start" || ame.type === "thinking_delta") {
@@ -207,6 +248,9 @@ export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, proj
         endThinking();
         if (state) state.visible = true;
         toolCount++;
+        // A tool run produces no model events until it finishes, so
+        // pause the stall timer for its duration.
+        disarmIdle();
         let kind = TOOL_KIND[event.toolName] || "reading";
         // Reading/searching again after an edit is the agent reviewing
         // its own work — give it its own visual state.
@@ -230,12 +274,16 @@ export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, proj
           toolActivities.delete(event.toolCallId);
           broadcast({ type: "activity_end", activityId: a.activityId, kind: a.kind });
         }
+        // Tool finished — the model stream is live again, re-arm.
+        armIdle();
       }
     } catch {}
   });
 
   try {
-    await session.prompt(prompt);
+    armIdle();
+    await Promise.race([session.prompt(prompt), idlePromise]);
+    disarmIdle();
     endThinking();
     for (const a of toolActivities.values()) broadcast({ type: "activity_end", activityId: a.activityId, kind: a.kind });
     toolActivities.clear();
@@ -263,8 +311,11 @@ export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, proj
     }
     return { finalText: finalText || "Done.", changes, usage, toolCount };
   } finally {
+    disarmIdle();
     try { unsubscribe(); } catch {}
-    try { session.dispose(); } catch {}
+    // Teardown is best-effort with a cap: a stalled session must not
+    // re-hang a turn the watchdog already ended.
+    try { await Promise.race([Promise.resolve(session.dispose()), sleep(ENGINE_DISPOSE_TIMEOUT_MS)]); } catch {}
   }
 }
 

@@ -354,3 +354,101 @@ test("preview: document-like misses get the branded placeholder; asset misses st
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------- engine stream-stall watchdog ----------------
+// Regression for the 2026-10-24 live incident: a provider stream that
+// stops emitting events must end the turn with a human timeout error,
+// never hang it forever. Uses a stubbed engine session (no provider,
+// no network); `idleTimeoutMs` shrinks the production 120s budget.
+
+function stubEngineSession({ promptImpl, onAbort } = {}) {
+  let listener = null;
+  const session = {
+    subscribe(cb) { listener = cb; return () => { listener = null; }; },
+    prompt: promptImpl || (() => new Promise(() => {})),
+    abort() { if (onAbort) onAbort(); return Promise.resolve(); },
+    dispose() {},
+  };
+  return { session, emit: (event) => { if (listener) listener(event); } };
+}
+
+function stubEngineModule(session) {
+  return {
+    ModelRuntime: { create: async () => ({ setRuntimeApiKey: async () => {}, getModel: () => ({ id: "m" }) }) },
+    SettingsManager: { inMemory: () => ({}) },
+    SessionManager: { create: () => ({}) },
+    DefaultResourceLoader: class { async reload() {} },
+    createAgentSession: async () => ({ session }),
+  };
+}
+
+test("engine: stalled stream aborts and rejects with provider_timeout", async () => {
+  const { runLiveAttempt, ENGINE_IDLE_TIMEOUT_MS } = await import("../src/engine.js");
+  assert.equal(ENGINE_IDLE_TIMEOUT_MS, 120_000);
+  let aborts = 0;
+  const { session } = stubEngineSession({ onAbort: () => { aborts++; } });
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-stall-"));
+  try {
+    await assert.rejects(
+      runLiveAttempt({
+        prompt: "hi", providerId: "anthropic", modelId: "m", apiKey: "k",
+        project, manifest: null, autoMode: false,
+        engineModule: stubEngineModule(session), idleTimeoutMs: 30,
+      }),
+      (e) => {
+        assert.equal(e.code, "provider_timeout");
+        assert.match(e.message, /stopped responding/);
+        assert.ok(!/sk-/.test(e.message), "no key material in the error");
+        return true;
+      },
+    );
+    assert.equal(aborts, 1);
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("engine: session events reset the stall budget", async () => {
+  const { runLiveAttempt } = await import("../src/engine.js");
+  const { session, emit } = stubEngineSession({});
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-stall-"));
+  const started = Date.now();
+  // One event halfway through the budget must push the timeout out
+  // by a full budget — a stall is quiet for the whole budget, not
+  // merely slow to start.
+  setTimeout(() => emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "x" } }), 30);
+  try {
+    await assert.rejects(
+      runLiveAttempt({
+        prompt: "hi", providerId: "anthropic", modelId: "m", apiKey: "k",
+        project, manifest: null, autoMode: false,
+        engineModule: stubEngineModule(session), idleTimeoutMs: 60,
+      }),
+      (e) => e.code === "provider_timeout",
+    );
+    assert.ok(Date.now() - started >= 75, `timeout fired too early (${Date.now() - started}ms)`);
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("engine: healthy stream is untouched by the watchdog", async () => {
+  const { runLiveAttempt } = await import("../src/engine.js");
+  let aborts = 0;
+  const { session } = stubEngineSession({
+    promptImpl: async () => {},
+    onAbort: () => { aborts++; },
+  });
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-stall-"));
+  try {
+    const r = await runLiveAttempt({
+      prompt: "hi", providerId: "anthropic", modelId: "m", apiKey: "k",
+      project, manifest: null, autoMode: false,
+      engineModule: stubEngineModule(session), idleTimeoutMs: 30,
+    });
+    assert.equal(r.finalText, "Done.");
+    assert.equal(aborts, 0);
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
