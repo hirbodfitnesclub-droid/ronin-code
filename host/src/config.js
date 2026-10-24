@@ -6,7 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { CONFIG_PATH, AUTH_PATH } from "./paths.js";
+import { CONFIG_PATH, AUTH_PATH, HOST_DIR } from "./paths.js";
 import { readJsonFile, writeJsonFile0600 } from "./util.js";
 import { loadUsage, keyStats } from "./usage.js";
 
@@ -22,8 +22,23 @@ export const providerById = (id) => PROVIDERS.find((p) => p.id === id);
 
 // ---------- small helpers ----------
 
+// Bundled defaults shipped inside the host directory (config.json next
+// to package.json). The repo host carries NO such file, so dev defaults
+// stay localhost; desktop/stage.mjs writes one into the STAGED host
+// with the production Ronin server / panel URLs. A value the user has
+// saved in their own config (RONIN_HOME/config.json) always wins over
+// the bundled default.
+export function loadBundledDefaults() {
+  const b = readJsonFile(path.join(HOST_DIR, "config.json"), {});
+  return b && typeof b === "object" && !Array.isArray(b) ? b : {};
+}
+
+const bundledString = (bundled, key) =>
+  typeof bundled[key] === "string" && bundled[key] ? bundled[key] : null;
+
 export function loadConfig() {
   const c = readJsonFile(CONFIG_PATH, {});
+  const bundled = loadBundledDefaults();
   return {
     provider: providerById(c.provider) ? c.provider : "anthropic",
     model: typeof c.model === "string" && c.model ? c.model : null,
@@ -55,8 +70,20 @@ export function loadConfig() {
     activeModelId: typeof c.activeModelId === "string" && c.activeModelId ? c.activeModelId : null,
     theme: c.theme === "light" ? "light" : "dark",
     roninServerUrl:
-      typeof c.roninServerUrl === "string" && c.roninServerUrl ? c.roninServerUrl : null,
-    panelUrl: typeof c.panelUrl === "string" && c.panelUrl ? c.panelUrl : null,
+      typeof c.roninServerUrl === "string" && c.roninServerUrl
+        ? c.roninServerUrl
+        : bundledString(bundled, "roninServerUrl"),
+    panelUrl:
+      typeof c.panelUrl === "string" && c.panelUrl ? c.panelUrl : bundledString(bundled, "panelUrl"),
+    // Subscription transport: 'direct' (host -> provider with the
+    // delegated key) is the default; 'relay' restores the v1 path
+    // through the Ronin server exactly. Anything else -> 'direct'.
+    subscriptionTransport:
+      c.subscriptionTransport === "relay" || c.subscriptionTransport === "direct"
+        ? c.subscriptionTransport
+        : bundled.subscriptionTransport === "relay"
+          ? "relay"
+          : "direct",
   };
 }
 
@@ -141,6 +168,7 @@ export function saveConfig() {
     theme: config.theme,
     roninServerUrl: config.roninServerUrl,
     panelUrl: config.panelUrl,
+    subscriptionTransport: config.subscriptionTransport,
   });
 }
 

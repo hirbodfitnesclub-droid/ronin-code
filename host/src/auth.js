@@ -78,6 +78,11 @@ export class CredentialStore {
       subscriptionKeyStatus:
         typeof s.subscriptionKeyStatus === "string" && s.subscriptionKeyStatus ? s.subscriptionKeyStatus : null,
       routingMode: s.routingMode === "per_user" || s.routingMode === "shared" ? s.routingMode : null,
+      // Direct transport: the provider base URL delivered alongside
+      // the delegated key by the credential endpoint. Same lifecycle
+      // as the key itself (cleared with it); not a secret.
+      providerBaseUrl:
+        typeof s.providerBaseUrl === "string" && s.providerBaseUrl ? s.providerBaseUrl : null,
     };
   }
 
@@ -99,6 +104,8 @@ export class CredentialStore {
           ? session.subscriptionKeyStatus
           : null,
       routingMode: session.routingMode === "per_user" || session.routingMode === "shared" ? session.routingMode : null,
+      providerBaseUrl:
+        typeof session.providerBaseUrl === "string" && session.providerBaseUrl ? session.providerBaseUrl : null,
     });
   }
 
@@ -215,6 +222,15 @@ export class AuthManager {
     return s.subscriptionKeyFingerprint || subscriptionKeyFingerprint(s.subscriptionKey);
   }
 
+  /** The provider base URL stored alongside the delegated key
+   *  (direct transport). Host-internal, not a secret. Null when the
+   *  server has not delivered one (older servers) — callers then
+   *  fall back to the relay. */
+  getSubscriptionProviderBaseUrl() {
+    const s = this.store.load();
+    return s?.providerBaseUrl || null;
+  }
+
   // ---------- session lifecycle ----------
 
   _persistSession(body) {
@@ -233,6 +249,7 @@ export class AuthManager {
       subscriptionKeyFingerprint: sameUser ? (prev?.subscriptionKeyFingerprint ?? null) : null,
       subscriptionKeyStatus: sameUser ? (prev?.subscriptionKeyStatus ?? null) : null,
       routingMode: sameUser ? (prev?.routingMode ?? null) : null,
+      providerBaseUrl: sameUser ? (prev?.providerBaseUrl ?? null) : null,
     };
     this.store.save(session);
     return session;
@@ -251,16 +268,17 @@ export class AuthManager {
   _clearSubscriptionKey() {
     const s = this.store.load();
     if (!s) return;
-    if (!s.subscriptionKey && !s.subscriptionKeyFingerprint && !s.subscriptionKeyStatus) return;
+    if (!s.subscriptionKey && !s.subscriptionKeyFingerprint && !s.subscriptionKeyStatus && !s.providerBaseUrl) return;
     this.store.save({
       ...s,
       subscriptionKey: null,
       subscriptionKeyFingerprint: null,
       subscriptionKeyStatus: null,
+      providerBaseUrl: null,
     });
   }
 
-  _saveSubscriptionKey(key, keyStatus, routingMode) {
+  _saveSubscriptionKey(key, keyStatus, routingMode, providerBaseUrl) {
     const s = this.store.load();
     if (!s || typeof key !== "string" || !key) return null;
     const fp = subscriptionKeyFingerprint(key);
@@ -270,8 +288,22 @@ export class AuthManager {
       subscriptionKeyFingerprint: fp,
       subscriptionKeyStatus: keyStatus || "active",
       routingMode: routingMode || s.routingMode || "per_user",
+      // A credential response without a URL (older server) keeps any
+      // URL already stored for this key; an explicit URL replaces it.
+      providerBaseUrl:
+        typeof providerBaseUrl === "string" && providerBaseUrl ? providerBaseUrl : (s.providerBaseUrl ?? null),
     });
     return fp;
+  }
+
+  /** Persist a provider base URL delivered without new key material
+   *  (e.g. pending_create) alongside the key already held. No key, no
+   *  URL — the pair lives and dies together. */
+  _saveProviderBaseUrl(providerBaseUrl) {
+    const s = this.store.load();
+    if (!s || !s.subscriptionKey || typeof providerBaseUrl !== "string" || !providerBaseUrl) return;
+    if (s.providerBaseUrl === providerBaseUrl) return;
+    this.store.save({ ...s, providerBaseUrl });
   }
 
   _persistRoutingMode(mode) {
@@ -354,6 +386,18 @@ export class AuthManager {
         return null;
       }
       const routingMode = data.routingMode === "per_user" ? "per_user" : "shared";
+      // Direct-transport provider base URL (not a secret). Only an
+      // http(s) URL is honoured; anything else is treated as absent,
+      // which makes the turn path fall back to the relay.
+      let providerBaseUrl = null;
+      if (typeof data.providerBaseUrl === "string" && data.providerBaseUrl) {
+        try {
+          const parsed = new URL(data.providerBaseUrl.trim());
+          if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+            providerBaseUrl = data.providerBaseUrl.trim().replace(/\/+$/, "");
+          }
+        } catch {}
+      }
       if (routingMode === "shared") {
         this._clearSubscriptionKey();
         this._persistRoutingMode("shared");
@@ -361,7 +405,7 @@ export class AuthManager {
           this._subscription = { ...this._subscription, routingMode: "shared" };
         }
         log.info("subscription_credential_fetched", { routingMode, keyStatus: null });
-        return { routingMode, keyStatus: null, tokenLimitIssued: null };
+        return { routingMode, keyStatus: null, tokenLimitIssued: null, providerBaseUrl: null };
       }
       const keyStatus = typeof data.keyStatus === "string" ? data.keyStatus : "none";
       const tokenLimitIssued = typeof data.tokenLimitIssued === "number" ? data.tokenLimitIssued : null;
@@ -379,19 +423,30 @@ export class AuthManager {
       }
       if (keyStatus === "none" || keyStatus === "deleted" || keyStatus === "frozen") {
         // No spendable key to hold: frozen keys are withheld by the
-        // server (§5.2) and a stale local copy must not be used.
+        // server (§5.2) and a stale local copy must not be used. The
+        // provider base URL is cleared with the key (same lifecycle).
         this._clearSubscriptionKey();
       } else if (typeof data.delegatedKey === "string" && data.delegatedKey) {
         if (keyStatus === "active" || keyStatus === "needs_attention") {
           // Compare-by-hash happens inside the store write: a rotated /
           // replacement key simply overwrites the old fingerprint.
-          this._saveSubscriptionKey(data.delegatedKey, keyStatus, "per_user");
+          this._saveSubscriptionKey(data.delegatedKey, keyStatus, "per_user", providerBaseUrl);
         }
+      } else if (providerBaseUrl) {
+        // No new key material (e.g. pending_create): keep any existing
+        // key, but refresh its provider base URL in place.
+        this._saveProviderBaseUrl(providerBaseUrl);
       }
       // pending_create without key material: keep any existing key —
       // provisioning is transient and must not wipe a working key.
       log.info("subscription_credential_fetched", { routingMode, keyStatus });
-      return { routingMode, keyStatus, tokenLimitIssued, hasKey: Boolean(this.getSubscriptionKey()) };
+      return {
+        routingMode,
+        keyStatus,
+        tokenLimitIssued,
+        hasKey: Boolean(this.getSubscriptionKey()),
+        providerBaseUrl: this.getSubscriptionProviderBaseUrl(),
+      };
     })();
     this._credentialPromise = p;
     try {

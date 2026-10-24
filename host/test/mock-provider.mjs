@@ -1,5 +1,9 @@
 // Mock OpenAI-compatible provider for Ronin host E2E tests.
-// Behavior is driven by markers in the last user message:
+// Direct subscription transport (additive): POST /__control
+// { directMode: "ok" | "402" | "401" } makes /v1/chat/completions
+// fail that way ONLY for delegated subscription keys (Authorization
+// Bearer sk-ronin-FAKE…); BYOK traffic is unaffected. Default "ok".
+// Behavior is otherwise driven by markers in the last user message:
 //   SCENARIO:bash CMD:<command>   -> one bash tool call, then final text
 //   SCENARIO:env                  -> one read of ".env", then final text
 //   SCENARIO:noisy                -> bash printing repeated lines + a fake secret
@@ -14,6 +18,7 @@ import http from "node:http";
 const PORT = Number(process.env.MOCK_PORT || 7411);
 export const requests = [];
 let rateLimitHits = 0;
+let directMode = "ok";
 
 function sseChunk(res, obj) {
   res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -74,6 +79,20 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(requests));
   }
+  if (url.pathname === "/__control" && req.method === "POST") {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      let body = {};
+      try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {}
+      if (body.directMode === "ok" || body.directMode === "402" || body.directMode === "401") {
+        directMode = body.directMode;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, directMode }));
+    });
+    return;
+  }
   if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
@@ -81,6 +100,19 @@ const server = http.createServer((req, res) => {
       let body = {};
       try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch {}
       requests.push({ at: Date.now(), auth: req.headers.authorization || "", body });
+      // Direct subscription scenarios: only delegated keys are
+      // affected, so BYOK scenarios sharing this mock stay untouched.
+      const auth = req.headers.authorization || "";
+      if (directMode !== "ok" && auth.startsWith("Bearer sk-ronin-FAKE")) {
+        if (directMode === "402") {
+          res.writeHead(402, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: "insufficient_credit" }));
+        }
+        if (directMode === "401") {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: "unauthorized" }));
+        }
+      }
       const userText = lastUserText(body);
 
       if (userText.includes("MOCK:429")) {

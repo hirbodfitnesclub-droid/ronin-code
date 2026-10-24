@@ -6,7 +6,10 @@
 //   src-tauri/resources/host/   copy of ../host (src/, package.json,
 //                               package-lock.json, ENGINE.md, starters/ if
 //                               present — never node_modules from the repo)
-//                               followed by a production `npm ci` inside it.
+//                               plus a config.json carrying the production
+//                               roninServerUrl / panelUrl (merged into any
+//                               previously staged settings), followed by a
+//                               production `npm ci` inside it.
 //   src-tauri/resources/gui/    copy of ../gui/dist. This sibling layout is
 //                               required: the host resolves the GUI as
 //                               <host>/../gui/dist, so in the installed app
@@ -46,6 +49,12 @@ const hostOnly = args.has("--host-only");
 const withNodeWin = args.has("--node-win") && !hostOnly;
 const skipInstall = args.has("--skip-install");
 
+// Production account endpoints for the shipped app. Written into the
+// STAGED host's config file (see stageProductionConfig) — the repo
+// host keeps its localhost defaults.
+const PRODUCTION_RONIN_SERVER_URL = "https://ronin-user-panel.vercel.app";
+const PRODUCTION_PANEL_URL = "https://ronin-user-panel.vercel.app";
+
 function fail(msg) {
   console.error(`stage: ERROR — ${msg}`);
   process.exit(1);
@@ -57,8 +66,47 @@ function copy(src, dest, label) {
   console.log(`stage: copied ${label} -> ${path.relative(REPO_ROOT, dest)}`);
 }
 
+function readJsonIfPresent(file) {
+  try {
+    const v = JSON.parse(fs.readFileSync(file, "utf8"));
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+// Production defaults for the staged host.
+//
+// The host loads its config from <RONIN_HOME>/config.json (user data)
+// and falls back, for roninServerUrl / panelUrl, to a bundled
+// config.json in the host root — host/src/config.js loadConfig() /
+// loadBundledDefaults(), same JSON object format, same key names.
+// Writing the production endpoints THERE (and only there) is what
+// makes the installed app talk to production out of the box while the
+// repo host/ keeps its localhost defaults; a user's own saved config
+// still wins over the bundled file.
+//
+// Merge, never clobber: settings already present in a staged
+// config.json (from a previous stage or a copied host config) are
+// preserved; only the two production keys are (re)written.
+function stageProductionConfig(priorStaged = {}) {
+  const dest = path.join(HOST_DEST, "config.json");
+  const merged = {
+    ...priorStaged,
+    ...readJsonIfPresent(dest),
+    roninServerUrl: PRODUCTION_RONIN_SERVER_URL,
+    panelUrl: PRODUCTION_PANEL_URL,
+  };
+  fs.writeFileSync(dest, JSON.stringify(merged, null, 2) + "\n", { mode: 0o600 });
+  try { fs.chmodSync(dest, 0o600); } catch {}
+  console.log(`stage: wrote production config -> ${path.relative(REPO_ROOT, dest)}`);
+}
+
 function stageHost() {
   if (!fs.existsSync(HOST_SRC)) fail(`host directory not found: ${HOST_SRC}`);
+  // Capture any previously staged config BEFORE wiping the tree, so
+  // stageProductionConfig can merge into it instead of clobbering.
+  const priorStagedConfig = readJsonIfPresent(path.join(HOST_DEST, "config.json"));
   fs.rmSync(HOST_DEST, { recursive: true, force: true });
   fs.mkdirSync(HOST_DEST, { recursive: true });
   for (const item of ["src", "package.json", "package-lock.json", "ENGINE.md", "starters"]) {
@@ -68,6 +116,7 @@ function stageHost() {
   }
   // Belt and braces: never ship a copied node_modules; npm ci recreates it.
   fs.rmSync(path.join(HOST_DEST, "node_modules"), { recursive: true, force: true });
+  stageProductionConfig(priorStagedConfig);
 
   if (skipInstall) {
     console.log("stage: --skip-install set, skipping host `npm ci`");

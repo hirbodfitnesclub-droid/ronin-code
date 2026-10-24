@@ -23,7 +23,11 @@
 //                                         gets 401 provider_key_invalid
 // Test controls:
 //   POST /__control { account?, proxyMode?, tokenTtlSec?, routingMode?,
-//                     credentialKey?, credentialKeyStatus? }
+//                     credentialKey?, credentialKeyStatus?,
+//                     providerBaseUrl? }  — providerBaseUrl (string or
+//                     null) is returned by the credential endpoint
+//                     alongside the delegated key (direct transport);
+//                     absent/null keeps the pre-direct server shape.
 //   GET  /__requests -> { proxy, refreshSeen, accountStatusAuth, credentialFetches }
 //   GET  /__state    -> { currentRefresh, refreshSeen }
 
@@ -44,6 +48,7 @@ const state = {
   routingMode: "shared",
   credentialKey: "sk-ronin-FAKE-e2e-key-0001",
   credentialKeyStatus: "active",
+  providerBaseUrl: null,
   credentialFetches: 0,
   account: {
     status: "active",
@@ -172,6 +177,9 @@ const server = http.createServer(async (req, res) => {
     if (body.routingMode === "per_user" || body.routingMode === "shared") state.routingMode = body.routingMode;
     if (typeof body.credentialKey === "string") state.credentialKey = body.credentialKey;
     if (typeof body.credentialKeyStatus === "string") state.credentialKeyStatus = body.credentialKeyStatus;
+    if (Object.prototype.hasOwnProperty.call(body, "providerBaseUrl")) {
+      state.providerBaseUrl = typeof body.providerBaseUrl === "string" && body.providerBaseUrl ? body.providerBaseUrl : null;
+    }
     return sendJson(res, 200, { ok: true });
   }
   if (pathname === "/__requests" && req.method === "GET") {
@@ -252,6 +260,7 @@ const server = http.createServer(async (req, res) => {
       tokenLimitIssued: 20_000_000,
       issuedAt: "2026-10-23T00:00:00.000Z",
       ...(withKey ? { delegatedKey: state.credentialKey } : {}),
+      ...(state.providerBaseUrl ? { providerBaseUrl: state.providerBaseUrl } : {}),
     });
   }
   if (pathname === "/v1/chat/completions" && req.method === "POST") {

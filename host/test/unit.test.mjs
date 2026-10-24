@@ -15,6 +15,8 @@ process.env.RONIN_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-unit-"));
 
 const { unifiedDiff } = await import("../src/diff.js");
 const { compressToolText, pickKey, isFailoverError } = await import("../src/router.js");
+const { resolveSubscriptionTransport, subscriptionProviderBaseUrlOf } = await import("../src/router.js");
+const { loadConfig } = await import("../src/config.js");
 const { priceTurn } = await import("../src/cost.js");
 const { redactSecrets, redactKnownSecrets, isEnvPath, collectSecretValues } = await import("../src/guard.js");
 const { classifyProxyError } = await import("../src/router.js");
@@ -192,6 +194,44 @@ test("router: pickKey prefers the least-recently-used key", () => {
   const a = "key-gamma-0003", b = "key-delta-0004";
   recordKeyUse("openrouter", b, {});
   assert.equal(pickKey("openrouter", { openrouter: [a, b] }), a);
+});
+
+// ---------------- subscription transport selection ----------------
+
+test("transport: config defaults — subscriptionTransport 'direct', repo endpoints stay localhost (null)", () => {
+  const c = loadConfig();
+  assert.equal(c.subscriptionTransport, "direct");
+  // No bundled config.json in the repo host and no user config in the
+  // temp RONIN_HOME: both endpoints resolve to null, which the auth
+  // layer turns into the localhost defaults.
+  assert.equal(c.roninServerUrl, null);
+  assert.equal(c.panelUrl, null);
+});
+
+test("transport: direct requires per-user routing AND a provider base URL", () => {
+  const withUrl = { getSubscriptionProviderBaseUrl: () => "https://provider.test/v1/" };
+  const noUrl = { getSubscriptionProviderBaseUrl: () => null };
+  assert.equal(resolveSubscriptionTransport(withUrl, "per_user", subscriptionProviderBaseUrlOf(withUrl)), "direct");
+  assert.equal(resolveSubscriptionTransport(noUrl, "per_user", subscriptionProviderBaseUrlOf(noUrl)), "relay");
+  assert.equal(resolveSubscriptionTransport(withUrl, "shared", subscriptionProviderBaseUrlOf(withUrl)), "relay");
+});
+
+test("transport: provider base URL is normalised (trailing slash) and non-http(s) is rejected", () => {
+  assert.equal(
+    subscriptionProviderBaseUrlOf({ getSubscriptionProviderBaseUrl: () => "https://provider.test/v1///" }),
+    "https://provider.test/v1",
+  );
+  assert.equal(subscriptionProviderBaseUrlOf({ getSubscriptionProviderBaseUrl: () => "ftp://x/v1" }), null);
+  assert.equal(subscriptionProviderBaseUrlOf({ getSubscriptionProviderBaseUrl: () => "not a url" }), null);
+  assert.equal(subscriptionProviderBaseUrlOf(null), null);
+});
+
+test("transport: a manager-level 'relay' override wins over the direct default", () => {
+  const m = {
+    getSubscriptionProviderBaseUrl: () => "https://provider.test/v1",
+    subscriptionTransport: () => "relay",
+  };
+  assert.equal(resolveSubscriptionTransport(m, "per_user", subscriptionProviderBaseUrlOf(m)), "relay");
 });
 
 // ---------------- zip writer ----------------

@@ -129,6 +129,14 @@ const roninControl = async (body) => {
 };
 const roninRequests = async () => (await fetch(`${RONIN}/__requests`)).json();
 const roninState = async () => (await fetch(`${RONIN}/__state`)).json();
+const mockControl = async (body) => {
+  await fetch(`${MOCK}/__control`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+};
+const mockRequests = async () => (await fetch(`${MOCK}/__requests`)).json();
 
 // ---------- AUTH-A: turns are gated before login ----------
 {
@@ -379,6 +387,61 @@ await api("POST", "/api/settings", { enabledModels: ["gpt-6-luna"] });
     Boolean(lastI) && lastI.headers.authorization === `Bearer ${FAKE2}`);
   const credsI = JSON.parse(fs.readFileSync(path.join(HOME, "credentials.json"), "utf8"));
   check("SUB-I: rotated key persisted", credsI.subscriptionKey === FAKE2);
+}
+
+// ---------- SUB-J: direct transport — turn goes to the provider, never the relay ----------
+{
+  const FAKE2 = "sk-ronin-FAKE-e2e-key-0002"; // current key after SUB-I rotation
+  await roninControl({ providerBaseUrl: `${MOCK}/v1` });
+  const proxyBefore = (await roninRequests()).proxy.length;
+  const mockBefore = (await mockRequests()).length;
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "subscription going direct to the provider", modelId: "gpt-6-luna" });
+  const doneJ = await waitEvent("turn_done", 60000, mark);
+  check("SUB-J: direct subscription turn completes", Boolean(doneJ));
+  const errJ = events.slice(mark).find((e) => e.type === "turn_error");
+  check("SUB-J: no turn_error on the direct turn", !errJ, errJ ? JSON.stringify(errJ) : "");
+  const mockAfter = await mockRequests();
+  const directReqs = mockAfter.slice(mockBefore);
+  check("SUB-J: the turn landed on the mock PROVIDER with the delegated key",
+    directReqs.length >= 1 && directReqs.every((r) => r.auth === `Bearer ${FAKE2}`),
+    directReqs.length ? `auth=${directReqs[0].auth}` : "no provider request");
+  check("SUB-J: provider request carries the catalog model",
+    directReqs.length >= 1 && directReqs[0].body.model === "gpt-6-luna",
+    directReqs.length ? `model=${directReqs[0].body.model}` : "");
+  const proxyAfter = (await roninRequests()).proxy.length;
+  check("SUB-J: the Ronin relay /v1/chat/completions was never touched",
+    proxyAfter === proxyBefore, `before=${proxyBefore} after=${proxyAfter}`);
+  const credsJ = JSON.parse(fs.readFileSync(path.join(HOME, "credentials.json"), "utf8"));
+  check("SUB-J: providerBaseUrl persisted alongside the delegated key",
+    credsJ.providerBaseUrl === `${MOCK}/v1` && credsJ.subscriptionKey === FAKE2);
+}
+
+// ---------- SUB-K: direct provider 402 -> insufficient_credit ----------
+{
+  await mockControl({ directMode: "402" });
+  const proxyBefore = (await roninRequests()).proxy.length;
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "direct subscription with no credit", modelId: "gpt-6-luna" });
+  const errK = await waitEvent("turn_error", 90000, mark, (e) => e.code === "insufficient_credit");
+  check("SUB-K: direct provider 402 -> turn_error insufficient_credit", Boolean(errK));
+  check("SUB-K: the 402 came from the provider, not the relay",
+    (await roninRequests()).proxy.length === proxyBefore);
+  await mockControl({ directMode: "ok" });
+}
+
+// ---------- SUB-L: direct provider 401 -> subscription_locked ----------
+{
+  await mockControl({ directMode: "401" });
+  mark = events.length;
+  await api("POST", "/api/turn", { prompt: "direct subscription with a frozen key", modelId: "gpt-6-luna" });
+  const errL = await waitEvent("turn_error", 90000, mark, (e) => e.code === "subscription_locked");
+  check("SUB-L: direct provider 401 -> turn_error subscription_locked", Boolean(errL));
+  const loginErrL = events.slice(mark).find((e) => e.type === "turn_error" && e.code === "login_required");
+  check("SUB-L: provider 401 is not mislabelled login_required", !loginErrL);
+  await mockControl({ directMode: "ok" });
+  // Restore the pre-direct server shape for the remaining sections.
+  await roninControl({ providerBaseUrl: null });
 }
 
 // ---------- SUB-F: refresh rotation persists the newest token ----------

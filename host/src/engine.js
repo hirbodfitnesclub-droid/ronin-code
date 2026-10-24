@@ -296,17 +296,28 @@ export async function runLiveTurn(prompt, project, manifest, { autoMode, onProgr
 }
 
 /**
- * One subscription turn through the Ronin relay. Single route (no BYOK
- * failover chain), with relay failures mapped to stable turn_error
- * codes by the caller (design §6.4):
- *  402 → 'insufficient_credit' (existing credit banner);
+ * One subscription turn. Single route (no BYOK failover chain), with
+ * failures mapped to stable turn_error codes by the caller (design
+ * §6.4). The transport is per-attempt (attempt.transport): 'relay'
+ * (Ronin server /v1) or 'direct' (host → provider with the delegated
+ * key); streaming and mapping are shared, with ONE difference —
+ * error semantics at the endpoint:
+ *  402 → 'insufficient_credit' (existing credit banner) on both;
  *  relay 403 `account_suspended` → 'subscription_locked' (existing
  *  locked banner — never 'model_disabled');
- *  key-shaped failures (401 / `provider_key_invalid`) → ONE credential
- *  re-fetch (§5.2c) and, when it yields a different key and nothing
- *  user-visible has streamed yet, ONE retry — the stale-key self-heal
- *  of §10 row 15. After that, the v1 session path applies: one forced
- *  revalidate, then 'login_required' if the session was cleared.
+ *  relay key-shaped failures (401 / `provider_key_invalid`) → ONE
+ *  credential re-fetch (§5.2c) and, when it yields a different key
+ *  and nothing user-visible has streamed yet, ONE retry — the
+ *  stale-key self-heal of §10 row 15. After that, the v1 session
+ *  path applies: one forced revalidate, then 'login_required' if
+ *  the session was cleared;
+ *  DIRECT provider 401 (a frozen delegated key returns 401 at the
+ *  provider — verified live in Phase 2) → the SAME heal attempt,
+ *  then 'subscription_locked', never the session/login path: the
+ *  session is fine, the key is not spendable.
+ *  Network failure to either endpoint classifies as neither and
+ *  surfaces as the generic turn error, leaving the session usable
+ *  for the next turn (same recovery as the relay hang/close case).
  */
 export async function runSubscriptionLive(prompt, project, manifest, { authManager, modelId, effort, fast, autoMode } = {}) {
   let retriedAfterRefetch = false;
@@ -351,6 +362,33 @@ export async function runSubscriptionLive(prompt, project, manifest, { authManag
       if (kind === "provider_key_not_ready") {
         const err = new Error("Your subscription key is still being set up. Please try again in a moment.");
         err.code = "provider_key_not_ready";
+        throw err;
+      }
+      if ((kind === "unauthorized" || kind === "provider_key_invalid") && attempt.transport === "direct") {
+        // Direct provider 401: frozen/invalid delegated key. One
+        // credential re-fetch may heal it (rotated/replacement key —
+        // same §5.2c signal as the relay); if it does not, the
+        // existing locked state applies. Revalidate first so the
+        // cached account state (and the stored key, when the server
+        // reports the account/key disabled) is current.
+        if (!retriedAfterRefetch && !state.visible) {
+          retriedAfterRefetch = true;
+          let healed = false;
+          if (typeof authManager.refreshSubscriptionCredential === "function") {
+            const before = typeof authManager.getSubscriptionKeyFingerprint === "function"
+              ? authManager.getSubscriptionKeyFingerprint()
+              : null;
+            try { await authManager.refreshSubscriptionCredential(); } catch {}
+            const after = typeof authManager.getSubscriptionKeyFingerprint === "function"
+              ? authManager.getSubscriptionKeyFingerprint()
+              : null;
+            healed = Boolean(after) && after !== before;
+          }
+          if (healed) continue;
+        }
+        try { await authManager.revalidate(); } catch {}
+        const err = new Error("Your Ronin subscription is not active for this device.");
+        err.code = "subscription_locked";
         throw err;
       }
       const keyShaped = kind === "unauthorized" || kind === "provider_key_invalid";
