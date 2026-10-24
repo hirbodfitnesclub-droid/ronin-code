@@ -137,3 +137,63 @@ reference only. GUI only — no host/server/web changes.
   instead of inventing per-step times.
 
 **Gates**: `npm run typecheck` ✓ · `npm test` 32/32 ✓ · `npm run build` ✓
+
+---
+
+## Phase 4 — Changes/Checkpoints (RDX-06), Publish (RDX-07), Settings + States (RDX-08)
+
+**Built**
+- Changes card rebuilt: the old decorative tiles (line widths derived from
+  the file index — fabricated-looking) are gone. The card now shows the
+  summary (real counts), the **measured turn duration**, the metered cost,
+  and the files as compact rows **grouped New / Edited** with real paths.
+  Undo, the real diff view and checkpoint-save stay. The raw English action
+  string no longer leaks into the FA UI.
+- Checkpoints became a **timeline** (newest first, current marker on the
+  head, file counts, human times) with an inline **restore confirmation**
+  carrying the exact loss copy («بازگشت به این نقطه، همه‌ی تغییرهای بعد از
+  آن را از بین می‌برد»). Restoring the current checkpoint is disabled —
+  it would be a no-op. Manual creation stays (the host API supports it).
+- Publish is an explicit state machine: ready → working (indeterminate
+  spinner + semantic label, no percentages) → result (real dist path +
+  file count from the export response; "download started" for the zip)
+  → failure with a retry of the failed action. Guidance steps unchanged.
+- **Settings is a full screen now** (the modal is deleted): side section
+  nav — Connection & keys, Models, Router, Subscription, Account,
+  Appearance, Language, Safety — with the modal's exact save/test
+  semantics preserved (one Save persists everything; Test keeps its
+  save-then-probe behavior). Subscription shows server figures (balance,
+  spendable, status, device) + masked delegated key + panel buttons;
+  Account shows name/phone/device + refresh + logout. Nothing is priced
+  in-app and there is no checkout.
+- Global states: **offline banner** (navigator.onLine + events; work
+  continues locally), **subscription-lock banner** mirroring the host's
+  own gate (known non-'active' status) that never blocks BYOK, plus the
+  Phase-1 loading splash and Auto banner — board 04's surfaces covered
+  with §8-style copy.
+
+**Deviations**
+- *Deleted-files group* (RDX-06 names جدید/ویرایش‌شده/حذف‌شده): the host
+  snapshot diff never reports deletions, so the group is omitted rather
+  than shown permanently empty (see Verified API facts).
+- *Publish "result with real URL"*: the real flow produces a local dist/
+  export + a zip — there is no hosted URL. The result state shows the
+  real exported path instead; inventing a URL would violate §1.
+- *Usage today/month in Settings → Subscription*: the host status
+  carries balance/spendable only; per-period usage lives in the web
+  panel (one click away) — not fabricated in-app.
+
+**Gates**: `npm run typecheck` ✓ · `npm test` 32/32 ✓ · `npm run build` ✓ ·
+full-repo spot check: host unit tests 82/82 ✓ (host untouched)
+
+---
+
+## Remaining API gaps (host backlog, GUI designed around all of them)
+
+1. No recent-projects endpoint → Home shows the current project only.
+2. No turn-cancel endpoint → no composer Stop button.
+3. No attachment channel in `startTurn` → no attach button.
+4. Snapshot diff reports no deletions and no +/− line stats → Changes
+   groups by created/modified only, no line stats anywhere.
+5. SSE activity events carry no timestamps → durations are turn-level
+   (measured client-side), never per-step.

@@ -10,7 +10,7 @@ import ChatPanel from './features/chat/ChatPanel';
 import PreviewPanel from './features/preview';
 import HomeScreen from './features/home';
 import StartersModal from './features/starters';
-import SettingsModal from './features/settings';
+import SettingsScreen from './features/settings';
 import IdeaPanel from './features/idea';
 import PublishPanel from './features/publish';
 import CheckpointsPanel from './features/checkpoints';
@@ -23,7 +23,7 @@ import LoginScreen from './features/auth';
    app bar, banners, the active view (Home / Workspace) and the nav
    rail at the inline-end edge. */
 
-type View = 'home' | 'workspace';
+type View = 'home' | 'workspace' | 'settings';
 
 function storedNumber(key: string, fallback: number): number {
   try {
@@ -37,8 +37,8 @@ function storedNumber(key: string, fallback: number): number {
 export default function App() {
   /* ---------------- shell state ---------------- */
   const [view, setView] = useState<View>('home');
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
+  const [online, setOnline] = useState<boolean>(() => navigator.onLine);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [notice, setNotice] = useState('');
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
@@ -59,6 +59,19 @@ export default function App() {
 
   const invalidatePreview = useCallback(() => setPreviewKey((k) => k + 1), []);
   const onStartersClose = useCallback(() => setStartersOpen(false), []);
+
+  /* Offline surface (RDX-08): the app keeps working locally; the
+     banner just tells the truth about connectivity. */
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -127,6 +140,11 @@ export default function App() {
   const needsLogin = Boolean(status?.auth) && !status?.auth?.loggedIn;
   const showOnboarding = Boolean(status) && !needsLogin && !status?.onboarded && !onboardingDismissed;
   const autoMode = Boolean(status?.autoMode);
+  /* Subscription lock surface (RDX-08): mirrors the host's own gate —
+     a known non-active account status. It never blocks the app or
+     BYOK; it only informs, with the panel one click away. */
+  const subInfo = status?.auth?.subscription ?? null;
+  const subLocked = Boolean(subInfo) && subInfo?.status !== 'active';
 
   /* ---------------- cross-feature actions ---------------- */
   const openStarters = async () => {
@@ -211,7 +229,7 @@ export default function App() {
             onOpenPublish={() => setPublishOpen(true)}
             onToggleAuto={toggleAuto}
             onTogglePlan={togglePlan}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => setView('settings')}
           />
 
           {autoMode && (
@@ -221,6 +239,29 @@ export default function App() {
               <button type="button" className="btn btn--ghost btn--sm" onClick={() => void toggleAuto()}>
                 {t('app.autoTurnOff')}
               </button>
+            </div>
+          )}
+
+          {!online && (
+            <div className="shell-banner shell-banner--offline" role="status">
+              <span className="shell-banner-dot" aria-hidden="true" />
+              <span className="shell-banner-text">{t('app.offline')}</span>
+            </div>
+          )}
+
+          {subLocked && (
+            <div className="shell-banner shell-banner--locked" role="status">
+              <span className="shell-banner-dot" aria-hidden="true" />
+              <span className="shell-banner-text">{t('app.subLocked')}</span>
+              {status?.panelUrl && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => window.open(status.panelUrl, '_blank', 'noopener')}
+                >
+                  {t('account.openPanel')}
+                </button>
+              )}
             </div>
           )}
 
@@ -241,6 +282,13 @@ export default function App() {
                     <span />
                   </div>
                 </div>
+              ) : view === 'settings' ? (
+                <SettingsScreen
+                  providers={providers}
+                  status={status}
+                  onSaved={() => void refreshMeta()}
+                  onBack={() => setView('workspace')}
+                />
               ) : view === 'home' ? (
                 <HomeScreen
                   mode={mode}
@@ -253,7 +301,7 @@ export default function App() {
                   onOpenStarters={openStarters}
                   onOpenProject={() => void openProject()}
                   onContinue={() => setView('workspace')}
-                  onOpenSettings={() => setSettingsOpen(true)}
+                  onOpenSettings={() => setView('settings')}
                 />
               ) : (
                 <main
@@ -291,19 +339,11 @@ export default function App() {
               collapsed={railCollapsed}
               onToggleCollapsed={() => setRailCollapsed((v) => !v)}
               onNavigate={setView}
-              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenSettings={() => setView('settings')}
               onOpenIdea={() => setIdeaOpen(true)}
               onOpenStarters={openStarters}
             />
           </div>
-
-          <SettingsModal
-            open={settingsOpen}
-            providers={providers}
-            status={status}
-            onClose={() => setSettingsOpen(false)}
-            onSaved={() => void refreshMeta()}
-          />
 
           <IdeaPanel
             open={ideaOpen}
@@ -334,7 +374,7 @@ export default function App() {
               onLanguage={setLangOverride}
               onDone={(openSettings) => {
                 setOnboardingDismissed(true);
-                if (openSettings) setSettingsOpen(true);
+                if (openSettings) setView('settings');
                 void refreshMeta();
               }}
             />

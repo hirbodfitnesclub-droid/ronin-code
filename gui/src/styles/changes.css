@@ -6,23 +6,7 @@
   padding: 14px; animation: msgIn 0.3s cubic-bezier(0.22, 0.9, 0.3, 1) both;
   box-shadow: 0 16px 36px -22px rgba(0, 0, 0, 0.8);
 }
-.changes-visual { display: flex; flex-wrap: wrap; gap: 8px; }
-.change-tile {
-  display: flex; flex-direction: column; gap: 7px; width: 104px;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.025); padding: 9px 10px;
-}
-.change-tile-lines { display: flex; flex-direction: column; gap: 4px; }
-.change-tile-lines i { display: block; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.22); }
-.change-tile-lines i.dim { background: rgba(255, 255, 255, 0.1); }
-.change-tile-name { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
-.change-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
-.change-dot--created { background: var(--green); box-shadow: 0 0 7px rgba(70, 192, 122, 0.7); }
-.change-dot--modified { background: var(--amber); box-shadow: 0 0 7px rgba(232, 161, 60, 0.6); }
-.change-tile .change-dot { align-self: flex-start; }
-.change-more { align-self: center; color: var(--text-faint); font-size: 12.5px; padding: 0 4px; }
-
-.changes-summary { margin-top: 10px; font-size: 13px; font-weight: 550; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.changes-summary { margin-top: 0; font-size: 13px; font-weight: 550; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .changes-actions { display: flex; gap: 8px; margin-top: 10px; }
 .chevron { display: inline-block; margin-inline-start: 5px; transition: transform 0.18s ease; font-size: 11px; }
 .chevron--open { transform: rotate(180deg); }
@@ -31,3 +15,16 @@
 .changes-details li { display: flex; align-items: center; gap: 9px; padding: 4px 0; font-size: 12.5px; }
 .changes-details code { font-family: var(--font-mono); color: var(--text-dim); word-break: break-all; }
 .changes-details-action { margin-inline-start: auto; color: var(--text-faint); text-transform: capitalize; flex: none; }
+
+/* RDX-06 — grouped real file rows */
+.changes-meta { display: inline-flex; gap: 10px; align-items: baseline; }
+.changes-duration { color: var(--text-dim); font-size: 12px; font-weight: 500; }
+.changes-groups { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; max-height: 260px; overflow-y: auto; }
+.changes-group-title { margin: 0 0 4px; font-size: 11.5px; font-weight: 650; color: var(--text-dim); letter-spacing: 0.01em; }
+.changes-rows { list-style: none; margin: 0; padding: 0; }
+.changes-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px; min-width: 0; }
+.changes-row-name { font-weight: 550; flex: none; }
+.changes-row-path {
+  color: var(--text-faint); font-family: var(--font-mono); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr;
+}
