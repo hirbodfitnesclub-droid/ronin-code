@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { ApiError } from '../../lib/api';
 
 export function Card({ title, actions, children }: { title?: string; actions?: ReactNode; children: ReactNode }) {
   return (
@@ -127,6 +128,9 @@ export function BarChart({
 }
 
 export function errText(e: unknown): string {
-  if (e instanceof Error) return e.message;
+  // Only server ApiErrors carry display text (the server guarantees those
+  // messages are human literals). Anything else — fetch failures, browser
+  // error text — collapses to a generic human message, never raw text.
+  if (e instanceof ApiError) return e.message;
   return 'خطای نامشخص رخ داد.';
 }

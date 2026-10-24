@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, type MaturedIdea, type Mode } from '../../lib/api';
+import { humanErrorText } from '../../lib/errors';
 import { useLang } from '../../lib/i18n';
 
 interface Props {
@@ -27,7 +28,7 @@ export default function IdeaPanel({ open, mode, onClose, onBuilt }: Props) {
     try {
       setMatured(await api.matureIdea(idea.trim()));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('errors.unknown'));
+      setError(humanErrorText(err, t));
     } finally {
       setBusy(false);
     }
@@ -42,7 +43,7 @@ export default function IdeaPanel({ open, mode, onClose, onBuilt }: Props) {
       onBuilt(res.path, idea.trim());
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('errors.unknown'));
+      setError(humanErrorText(err, t));
     } finally {
       setBuilding(false);
     }

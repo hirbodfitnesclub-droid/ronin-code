@@ -3,6 +3,7 @@ import { api, type Provider, type Status, type Theme } from '../../lib/api';
 import RouterSection from './RouterSection';
 import ModelMultiSelect from './ModelMultiSelect';
 import ThemeSegmented from '../../components/ui/ThemeSegmented';
+import { humanErrorText } from '../../lib/errors';
 import { useLang, type Lang } from '../../lib/i18n';
 
 interface Props {
@@ -109,7 +110,7 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
       onSaved();
       onClose();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : t('settings.saveFailed'));
+      setSaveError(humanErrorText(err, t, 'settings.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -142,7 +143,7 @@ export default function SettingsModal({ open, providers, status, onClose, onSave
     } catch (err) {
       setTestResult({
         ok: false,
-        message: err instanceof Error ? err.message : t('settings.testFailed'),
+        message: humanErrorText(err, t, 'settings.testFailed'),
       });
     } finally {
       setTesting(false);

@@ -210,6 +210,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Host error codes are snake_case tokens (e.g. `code_used`,
+ * `login_required`, `auth_unreachable`): a lowercase token containing at
+ * least one underscore and no spaces/punctuation. Human sentences never
+ * match this shape, which is what lets `request()` tell the two apart
+ * when a code arrives in the `error` field instead of `code`.
+ */
+export function isErrorCodeToken(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(value);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -220,16 +231,41 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
   if (!res.ok) {
-    let detail = '';
+    let message = '';
     let code: string | undefined;
     try {
-      const body = (await res.json()) as { message?: string; error?: string; code?: string };
-      detail = body.message || body.error || '';
-      code = body.code;
+      const body = (await res.json()) as { message?: unknown; error?: unknown; code?: unknown } | null;
+      if (body && typeof body === 'object') {
+        /* Host error bodies come in two shapes:
+           (1) { error: "<code>" } — auth routes: the stable code IS the
+               `error` field and there is no `code` field;
+           (2) { error: "<human sentence>", code: "<code>" } — the
+               turn/idea/export routes.
+           Derive the code from `code` first, else from a code-shaped
+           `error`, so callers keyed by `err.code` (login tables,
+           ERROR_CODE_KEYS) actually receive it for both shapes. */
+        if (typeof body.code === 'string' && body.code) code = body.code;
+        else if (isErrorCodeToken(body.error)) code = body.error;
+        /* Human detail: the first candidate that is a real sentence —
+           not the code itself and not code-shaped. */
+        for (const candidate of [body.message, body.error]) {
+          if (typeof candidate === 'string' && candidate.trim() && candidate !== code && !isErrorCodeToken(candidate)) {
+            message = candidate;
+            break;
+          }
+        }
+      }
     } catch {
-      /* non-JSON error body */
+      /* non-JSON error body — message stays empty, code stays undefined */
     }
-    throw new ApiError(detail || `Request failed (${res.status})`, code);
+    /* Deliberate: when there is no human detail, `message` stays EMPTY.
+       An ApiError message must never be the raw code (shape 1 would
+       otherwise leak e.g. "code_used" to the screen) and never a
+       synthetic "Request failed (500)" — neither is something a user
+       can act on. Every display surface maps `code` to a localised
+       string, or falls back to a localised generic (lib/errors
+       `humanErrorText`), so an empty message is safe by construction. */
+    throw new ApiError(message, code);
   }
   return (await res.json()) as T;
 }

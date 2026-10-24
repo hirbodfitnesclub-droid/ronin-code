@@ -23,6 +23,9 @@ const { cleanError, looksLikeRawHtml } = await import("../src/util.js");
 const { classifyProxyError } = await import("../src/router.js");
 const { recordKeyUse } = await import("../src/usage.js");
 const { buildZip } = await import("../src/publish.js");
+const { testProviderKey } = await import("../src/router.js");
+const { setProject } = await import("../src/config.js");
+const { servePreview } = await import("../src/http-server.js");
 
 // ---------------- unified diff ----------------
 
@@ -290,4 +293,64 @@ test("zip: buildZip emits a valid local-file header and central directory", () =
   assert.equal(buf.readUInt32LE(0), 0x04034b50); // local header signature
   assert.ok(buf.includes(Buffer.from("a.txt")));
   assert.equal(buf.readUInt32LE(buf.length - 22), 0x06054b50); // end record
+});
+
+// ---------------- error-surface invariant: settings key test + preview ----------------
+// Owner rule: the user only ever sees a human message — never raw provider
+// payloads (HTML error pages, fetch internals) or bare status bodies.
+
+test("settings key test: provider payloads and fetch internals never reach the message", async () => {
+  const realFetch = globalThis.fetch;
+  const html = '<html lang="ru"><head><title>404</title></head><body>Not Found</body></html>';
+  try {
+    globalThis.fetch = async () => ({ ok: false, status: 401, text: async () => html });
+    const rejected = await testProviderKey("openai", "sk-bad");
+    assert.equal(rejected.ok, false);
+    assert.ok(!rejected.message.includes("<") && !rejected.message.includes("Not Found"), rejected.message);
+
+    globalThis.fetch = async () => ({ ok: false, status: 503, text: async () => html });
+    const upstream = await testProviderKey("openai", "sk-x");
+    assert.equal(upstream.ok, false);
+    assert.ok(upstream.message.includes("503"), upstream.message);
+    assert.ok(!upstream.message.includes("<"), upstream.message);
+
+    globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+    const unreachable = await testProviderKey("openai", "sk-x");
+    assert.equal(unreachable.ok, false);
+    assert.ok(!/fetch failed|TypeError/.test(unreachable.message), unreachable.message);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("preview: document-like misses get the branded placeholder; asset misses stay 404", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-preview-"));
+  const call = async (pathname) => {
+    const chunks = [];
+    const res = {
+      status: 0,
+      writeHead(s) { this.status = s; },
+      end(b) { if (b) chunks.push(Buffer.isBuffer(b) ? b : Buffer.from(String(b))); },
+    };
+    await servePreview({}, res, new URL(`http://127.0.0.1${pathname}`));
+    return { status: res.status, body: Buffer.concat(chunks).toString("utf8") };
+  };
+  setProject(dir);
+  try {
+    const page = await call("/preview/some-page");
+    assert.equal(page.status, 200);
+    assert.ok(page.body.includes("Your creation will appear here"), page.body.slice(0, 120));
+
+    const asset = await call("/preview/missing.js");
+    assert.equal(asset.status, 404);
+    assert.equal(asset.body, "Not found");
+
+    fs.writeFileSync(path.join(dir, "index.html"), "<h1>hi</h1>");
+    const home = await call("/preview/");
+    assert.equal(home.status, 200);
+    assert.ok(home.body.includes("<h1>hi</h1>"));
+  } finally {
+    setProject(null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

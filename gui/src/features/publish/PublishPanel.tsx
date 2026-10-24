@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../../lib/api';
+import { humanErrorText } from '../../lib/errors';
 import { useLang } from '../../lib/i18n';
 
 interface Props {
@@ -29,7 +30,7 @@ export default function PublishPanel({ open, projectName, onClose }: Props) {
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('errors.unknown'));
+      setError(humanErrorText(err, t));
     } finally {
       setBusy('');
     }
@@ -42,7 +43,7 @@ export default function PublishPanel({ open, projectName, onClose }: Props) {
       const res = await api.exportDist();
       setDoneMsg(t('publish.distDone', { count: res.files }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('errors.unknown'));
+      setError(humanErrorText(err, t));
     } finally {
       setBusy('');
     }

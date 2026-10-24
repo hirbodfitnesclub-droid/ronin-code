@@ -282,6 +282,15 @@ export function useChat(opts: ChatOptions) {
     };
 
     const source = openStream(handle);
+    /* SSE failure: EventSource retries silently in the background, but
+       turn events are broadcast once — if the stream drops mid-turn
+       those events are lost and the turn would spin forever with no
+       message at all. Surface the localised generic turn error and end
+       the turn instead. When no turn is running a dropped stream is
+       invisible by design (the next action reports its own failure). */
+    source.onerror = () => {
+      if (runningRef.current) finishTurn(opts.t('app.genericTurnError'));
+    };
     return () => source.close();
   }, [finishTurn, opts]);
 

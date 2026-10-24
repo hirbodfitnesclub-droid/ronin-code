@@ -1,4 +1,5 @@
 import { sendJson, readJson } from '../http.js';
+import { log } from '../log.js';
 import { audit } from '../db.js';
 import { badRequest, HttpError } from '../util.js';
 import { requireCap } from './caps.js';
@@ -148,7 +149,10 @@ export function registerAnalyticsRoutes(router, { db, cfg, guard }) {
       if (!reply) throw new HttpError(502, 'analyst_empty_reply', 'Analyst gateway returned an empty reply.');
     } catch (e) {
       if (e instanceof HttpError) throw e;
-      throw new HttpError(502, 'analyst_unreachable', `Analyst gateway unreachable: ${e.message}`);
+      // The raw cause (fetch internals, gateway text) goes to the server log
+      // only — the admin sees a human message, never upstream payload text.
+      log.warn('analyst_unreachable', { error: e?.message ?? String(e) });
+      throw new HttpError(502, 'analyst_unreachable', 'Analyst gateway unreachable.');
     } finally {
       clearTimeout(timer);
     }

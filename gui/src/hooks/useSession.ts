@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Provider, type Starter, type Status } from '../lib/api';
 import { makeLangCtx, type Lang } from '../lib/i18n';
-import { apiErrorKey } from '../lib/errors';
+import { humanErrorText } from '../lib/errors';
 
 /* Ronin Code — session state: host status, providers, language, session
    cost, and the project/mode actions that mutate them. */
@@ -22,13 +22,13 @@ export function useSession(opts: SessionOptions) {
   const ctx = useMemo(() => makeLangCtx(lang), [lang]);
   const { t, fmtUsd } = ctx;
 
+  /* Delegates to the shared display helper (lib/errors): mapped code →
+     localised string, genuine human sentence → as-is, everything else
+     (raw codes, browser fetch text, synthetic status strings) → the
+     localised fallback. Never returns a raw err.message verbatim. */
   const translateError = useCallback(
-    (err: unknown, fallbackKey: Parameters<typeof t>[0] = 'errors.unknown'): string => {
-      const key = apiErrorKey(err);
-      if (key) return t(key);
-      if (err instanceof Error && err.message) return err.message;
-      return t(fallbackKey);
-    },
+    (err: unknown, fallbackKey: Parameters<typeof t>[0] = 'errors.unknown'): string =>
+      humanErrorText(err, t, fallbackKey),
     [t],
   );
 

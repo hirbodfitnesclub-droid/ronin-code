@@ -58,7 +58,13 @@ export async function servePreview(req, res, url) {
   if (rel === "/" || rel.endsWith("/")) rel += "index.html";
   const target = safeJoin(path.resolve(getProject()), rel);
   if (!target || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
-    if (rel.endsWith("index.html")) {
+    // Document-like misses (the index, .html pages, extensionless routes)
+    // get the branded placeholder: the preview pane is a top-level document,
+    // so a bare "Not found" status body is what the user would stare at.
+    // Asset-like misses (.js/.css/.png/…) keep a true 404 so broken asset
+    // references stay detectable instead of silently loading HTML.
+    const documentLike = rel.endsWith("index.html") || rel.endsWith(".html") || !path.posix.extname(rel);
+    if (documentLike) {
       // Project is open but has no page yet — keep the branded placeholder
       // instead of a bare 404 while the agent creates the first files.
       const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ronin Code</title><style>

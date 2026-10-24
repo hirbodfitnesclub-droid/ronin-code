@@ -13,15 +13,10 @@ export type { StringKey };
 
 const STRINGS: Record<Lang, Record<StringKey, string>> = { en, fa };
 
-/** Host error codes → dictionary keys (host messages stay English as fallback). */
-export const ERROR_CODE_KEYS: Record<string, StringKey> = {
-  no_project: 'errors.no_project',
-  prompt_required: 'errors.prompt_required',
-  turn_running: 'errors.turn_running',
-  budget_exceeded: 'errors.budget_exceeded',
-  no_snapshot: 'errors.no_snapshot',
-  not_found: 'errors.not_found',
-};
+/* Host error codes → dictionary keys now lives in lib/errors (next to
+   apiErrorKey, its only consumer) so that module stays unit-testable
+   without importing React/JSX; re-exported here for compatibility. */
+export { ERROR_CODE_KEYS } from '../errors';
 
 export interface LangCtx {
   lang: Lang;
