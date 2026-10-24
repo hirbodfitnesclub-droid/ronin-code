@@ -577,6 +577,18 @@ test("attempt: missing per-user key triggers one credential fetch, then provider
   assert.equal(stub.calls.credential, callsAfterLogin + 1, "exactly one on-demand fetch");
 });
 
+test("attempt: frozen per-user key surfaces subscription_locked, not provider_key_not_ready", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub, { keyStatus: "frozen" });
+  stub.state.credential = { ...stub.state.credential, keyStatus: "frozen", delegatedKey: null };
+  const { manager } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  await assert.rejects(buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" }), (e) => {
+    assert.equal(e.code, "subscription_locked");
+    return true;
+  });
+});
+
 test("attempt: a fetchable key is picked up on first subscription use", async () => {
   const stub = makeStubServer();
   const { manager, store } = makeManager(stub);

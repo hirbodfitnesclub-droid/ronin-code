@@ -168,6 +168,15 @@ export async function buildSubscriptionAttempt(authManager, { modelId, effort, f
   let apiKey = await SUBSCRIPTION_PROVIDER.resolveApiKey(authManager);
   if (!apiKey) {
     if (routingMode === "per_user") {
+      // A frozen key is withheld by the server exactly like a pending
+      // one, but it is NOT a transient provisioning state — the key was
+      // frozen (admin action), so the honest surface is the locked state.
+      const keyStatus = authManager.state?.().subscription?.subscriptionKeyStatus ?? null;
+      if (keyStatus === "frozen") {
+        const err = new Error("Your Ronin subscription is not active for this device.");
+        err.code = "subscription_locked";
+        throw err;
+      }
       // Key still provisioning (pending_create / none): a transient
       // "setting up your key" state (§6.2) — NOT a credit or login
       // failure, and never the credit banner.

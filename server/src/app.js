@@ -216,6 +216,15 @@ export function createUserHandler(db, cfg, sms) {
   });
 
   // ── Phase 2: delegated-key delivery (§5.2) ─────────────────────────────
+  // The provider's inference API root (OpenAI-completions shape): the
+  // configured base carries NO /v1 suffix by contract (the reseller
+  // client appends its own paths), so add the suffix exactly once here.
+  const inferenceBaseUrl = (base) => {
+    if (!base) return base;
+    const b = String(base).replace(/\/+$/, '');
+    return b.endsWith('/v1') ? b : `${b}/v1`;
+  };
+
   router.get('/api/subscription/credential', async (req, res) => {
     const { user } = await requireUser(req); // authenticate() enforces device registry + is_active
     await requireRateLimit(db, `credential:${user.id}`, 30, 3_600_000, 'credential_rate_limited');
@@ -240,7 +249,7 @@ export function createUserHandler(db, cfg, sms) {
       }
       return sendJson(res, 200, {
         ...base, delegatedKey: plain, keyFingerprint: fingerprintOf(plain), keyLast4: keyRow.key_last4,
-        providerBaseUrl: cfg.cvcBaseUrl,
+        providerBaseUrl: inferenceBaseUrl(cfg.cvcBaseUrl),
       });
     }
     return sendJson(res, 200, base);

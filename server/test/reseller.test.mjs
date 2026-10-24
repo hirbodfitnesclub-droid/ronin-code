@@ -108,6 +108,10 @@ test('approval → create intent → worker issues key; ciphertext only in DB; c
   assert.equal(cred.json.keyStatus, 'active');
   assert.equal(cred.json.delegatedKey, plainA);
   assert.equal(cred.json.tokenLimitIssued, 1000);
+  // The credential's providerBaseUrl is the INFERENCE root: the app's
+  // OpenAI-completions engine appends /chat/completions, so the URL must
+  // carry the /v1 suffix even though cfg.cvcBaseUrl never does.
+  assert.equal(cred.json.providerBaseUrl, stack.cfg.cvcBaseUrl + '/v1');
 });
 
 test('thin relay: session-Bearer and delegated-Bearer both forward with the user key; fast converts; no shared upstream call', async () => {
