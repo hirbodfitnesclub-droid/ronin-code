@@ -36,6 +36,10 @@ export function loadConfig(overrides = {}) {
     // connection string (role: postgres). Local dev stack: the local
     // service_role login created by supabase/local/00_prereqs.sql.
     databaseUrl: env.DATABASE_URL || '',
+    // Serverless/cloud login role (e.g. ronin_app) that must SET ROLE to a
+    // BYPASSRLS role (service_role) before serving queries — see db.js.
+    dbSetRole: env.DB_SET_ROLE || '',
+    dbPoolMax: int(env.DB_POOL_MAX, 0) || null,
     // Base URL of the Supabase Auth API (GoTrue).
     // Cloud: https://<ref>.supabase.co/auth/v1 · Local stack: http://127.0.0.1:<port>
     supabaseAuthUrl: (env.SUPABASE_AUTH_URL || '').replace(/\/$/, ''),

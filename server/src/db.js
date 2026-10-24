@@ -12,7 +12,17 @@ const { Pool } = pg;
  */
 export function createDb(cfg) {
   if (!cfg.databaseUrl) throw new Error('DATABASE_URL is not configured');
-  const pool = new Pool({ connectionString: cfg.databaseUrl, max: 20 });
+  const pool = new Pool({ connectionString: cfg.databaseUrl, max: cfg.dbPoolMax || 20 });
+  if (cfg.dbSetRole) {
+    // Cloud login roles (e.g. ronin_app) hold no BYPASSRLS themselves; every
+    // pooled connection assumes the configured role (service_role) so RLS is
+    // bypassed exactly as when connecting as postgres locally. Fail closed:
+    // if SET ROLE fails the connection is discarded, never served as-is.
+    if (!/^[a-z_][a-z0-9_]*$/.test(cfg.dbSetRole)) throw new Error('DB_SET_ROLE is not a plain role name');
+    pool.on('connect', async (client) => {
+      await client.query(`SET ROLE ${cfg.dbSetRole}`);
+    });
+  }
   pool.on('error', (e) => {
     // An idle client died (e.g. DB restart): the pool replaces it. Never crash.
     console.error(JSON.stringify({ level: 'error', scope: 'server', msg: 'pg_pool_error', error: e.message }));
