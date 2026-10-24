@@ -53,6 +53,7 @@ export const en = {
     'This sign-in is for the Ronin Code desktop app — after signing in, enter the return code in the app.',
   'auth.resendInClock': 'Resend code in {time}',
   'auth.getConnectionCode': 'Get connection code',
+  'auth.continueToPanel': 'Continue to the panel instead',
   'auth.gettingCode': 'Getting code…',
   'auth.codeExpiresIn': 'This code expires in {time}',
   'auth.codeExpired': 'This code has expired.',

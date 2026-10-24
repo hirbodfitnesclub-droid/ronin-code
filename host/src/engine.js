@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ENGINE_DIR, SESSIONS_DIR } from "./paths.js";
 import { config, loadAuth, currentModel } from "./config.js";
-import { sleep, cleanError } from "./util.js";
+import { sleep, cleanError, looksLikeRawHtml } from "./util.js";
 import { broadcast } from "./sse.js";
 import { makeGuardExtension, collectSecretValues } from "./guard.js";
 import { buildAttempts, isFailoverError, buildSubscriptionAttempt, classifyProxyError, SUBSCRIPTION_PROVIDER_ID } from "./router.js";
@@ -246,6 +246,13 @@ export async function runLiveAttempt({ prompt, providerId, modelId, apiKey, proj
       const last = typeof session.getLastAssistantText === "function" ? session.getLastAssistantText() : undefined;
       if (typeof last === "string" && last.trim()) finalText = last;
     } catch {}
+
+    // A "reply" that is a raw HTML document is not a reply — it is a
+    // fetched/provider error page the model (or the gateway) passed
+    // through. Fail the turn with it as the error instead of
+    // broadcasting it as assistant content; cleanError at the turn
+    // boundary reduces it to a human-readable message (status kept).
+    if (looksLikeRawHtml(finalText)) throw new Error(finalText);
 
     let changes = await diffAgainstManifest(project, manifest);
     if (!changes.length && trackedFiles.size) {

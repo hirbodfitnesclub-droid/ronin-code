@@ -76,6 +76,22 @@ export function detectFromApp(): boolean {
   }
 }
 
+/** Forget the from-app landing (marker + URL param) so the panel opens
+    normally from now on — used by the handoff screen's "continue to
+    panel" escape for users who already had a panel session. */
+export function clearFromApp(): void {
+  try {
+    sessionStorage.removeItem('ronin.panel.fromApp');
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('from')) {
+      url.searchParams.delete('from');
+      window.history.replaceState(null, '', url.toString());
+    }
+  } catch {
+    /* storage/URL unavailable — the in-memory skip flag still applies */
+  }
+}
+
 /** mm:ss for the resend countdown. */
 export function formatCountdown(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);

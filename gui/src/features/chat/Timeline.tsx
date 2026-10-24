@@ -1,4 +1,6 @@
 import type { ActivityKind, Mode } from '../../lib/api';
+import { useLang } from '../../lib/i18n';
+import { looksLikeRawHtml } from '../../lib/turnErrors';
 import type { TimelineItem } from './types';
 import ActivityVisual from '../../components/ui/ActivityVisual';
 import RichText from '../../components/ui/RichText';
@@ -23,6 +25,7 @@ interface Props {
 }
 
 export default function Timeline(p: Props) {
+  const { t } = useLang();
   return (
     <div className="messages">
       {p.items.map((item) => {
@@ -61,6 +64,19 @@ export default function Timeline(p: Props) {
               onApprove={() => void p.onApprovePlan(item.planId)}
               onReject={() => void p.onRejectPlan(item.planId)}
             />
+          );
+        }
+        /* Last line of defence: a raw HTML payload (a fetched or
+           provider error page) is never rendered as message content,
+           whatever produced the item — it shows as the localised
+           generic turn error in the error slot instead. */
+        if (item.kind === 'message' && looksLikeRawHtml(item.text)) {
+          return (
+            <div key={item.id} className="msg msg--error">
+              <div className="msg-bubble">
+                <p>{t('app.genericTurnError')}</p>
+              </div>
+            </div>
           );
         }
         return (

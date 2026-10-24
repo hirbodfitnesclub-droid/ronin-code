@@ -7,7 +7,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { config, getProject, loadAuth, keyList } from "./config.js";
 import { CREDENTIALS_PATH } from "./paths.js";
-import { readJsonFile } from "./util.js";
+import { readJsonFile, looksLikeRawHtml } from "./util.js";
 import { broadcast } from "./sse.js";
 import { compressToolText } from "./router.js";
 
@@ -66,6 +66,24 @@ export function isEnvPath(p, project) {
 
 export function envAccessAllowed(project = getProject()) {
   return project ? config.envAllowedProjects[path.resolve(project)] === true : false;
+}
+
+/**
+ * When a shell command fetched a page and got an HTTP error page
+ * back (the body is a raw HTML document whose title/status says so),
+ * replace the body with a short failure note: the model then knows
+ * the fetch failed instead of pasting the page into the chat. Only
+ * shell output is eligible — reading a local .html file is a
+ * legitimate raw-HTML tool result and is never rewritten.
+ */
+export function fetchedErrorPageNote(text) {
+  if (typeof text !== "string" || !looksLikeRawHtml(text)) return null;
+  const title = (text.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "";
+  const status = ((`${title} ${text.slice(0, 300)}`.match(/\b([45]\d{2})\b/) || [])[1]) || null;
+  if (!status && !/not found|error|ошибка/i.test(title)) return null;
+  return status
+    ? `[Ronin Code: the fetched page returned an HTTP ${status} error page, so its raw HTML was hidden. Treat this fetch as failed.]`
+    : "[Ronin Code: the fetched page returned an error page, so its raw HTML was hidden. Treat this fetch as failed.]";
 }
 
 // ---------- approvals ----------
@@ -150,6 +168,14 @@ export function makeGuardExtension({ project, autoMode, secretValues }) {
       let changed = false;
       const content = event.content.map((part) => {
         if (!part || part.type !== "text" || typeof part.text !== "string") return part;
+        const note =
+          event.toolName === "bash" || event.toolName === "powershell"
+            ? fetchedErrorPageNote(part.text)
+            : null;
+        if (note) {
+          changed = true;
+          return { ...part, text: note };
+        }
         let text = redactKnownSecrets(part.text, secretValues);
         text = compressToolText(text).text;
         if (text !== part.text) changed = true;

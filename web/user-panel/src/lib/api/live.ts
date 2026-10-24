@@ -46,6 +46,7 @@ export class LiveApiClient implements PanelApi {
   }
 
   private async raw(path: string, init: RequestInit, retry = true): Promise<unknown> {
+    const sentToken = this.session?.accessToken;
     let res: Response;
     try {
       res = await fetch(`${BASE}${path}`, {
@@ -60,7 +61,7 @@ export class LiveApiClient implements PanelApi {
       throw new ApiError(0, 'network', 'Network error');
     }
     if (res.status === 401 && retry && this.session) {
-      const refreshed = await this.tryRefresh();
+      const refreshed = await this.refreshOnce(sentToken);
       if (refreshed) return this.raw(path, init, false);
       this.setSession(null);
     }
@@ -69,6 +70,32 @@ export class LiveApiClient implements PanelApi {
       throw new ApiError(res.status, body.error?.code ?? 'unknown', body.error?.message ?? res.statusText);
     }
     return body;
+  }
+
+  private refreshInFlight: Promise<boolean> | null = null;
+
+  /**
+   * Refresh the session at most once per expiry, however many requests
+   * 401 at the same time. The server treats a second presentation of a
+   * rotated refresh token as theft and revokes the whole device
+   * session (refreshSession in server/src/auth.js), so parallel
+   * refreshes carrying the same token must never reach the wire: the
+   * dashboard fires several calls at once and they all share ONE
+   * in-flight refresh here. A caller whose failed access token has
+   * already been replaced by someone else's refresh simply retries
+   * with the current session — no network call at all.
+   */
+  private refreshOnce(failedAccessToken: string | undefined): Promise<boolean> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    if (this.session && failedAccessToken && this.session.accessToken !== failedAccessToken) {
+      return Promise.resolve(true);
+    }
+    const p = this.tryRefresh();
+    this.refreshInFlight = p;
+    void p.finally(() => {
+      if (this.refreshInFlight === p) this.refreshInFlight = null;
+    });
+    return p;
   }
 
   private async tryRefresh(): Promise<boolean> {

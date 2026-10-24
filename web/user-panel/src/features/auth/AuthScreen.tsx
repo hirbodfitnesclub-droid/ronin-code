@@ -19,10 +19,23 @@ type Step = 'phone' | 'otp' | 'handoff';
 
 const RESEND_SECONDS = 60;
 
-export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void } = {}) {
+export function AuthScreen({
+  onSessionChanged,
+  startWithHandoff = false,
+  onContinueToPanel,
+}: {
+  onSessionChanged?: () => void;
+  /** Entered with a session that already exists (the root routed an
+      already-signed-in from-app visit here): skip the OTP steps and
+      show the return-code screen directly. */
+  startWithHandoff?: boolean;
+  /** Escape hatch rendered on the handoff screen in that mode: go to
+      the panel proper instead of returning to the app. */
+  onContinueToPanel?: () => void;
+} = {}) {
   const { t, lang, setLang } = useLang();
   const [fromApp] = useState<boolean>(detectFromApp);
-  const [step, setStep] = useState<Step>('phone');
+  const [step, setStep] = useState<Step>(startWithHandoff ? 'handoff' : 'phone');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState<StringKey | null>(null);
@@ -208,6 +221,11 @@ export function AuthScreen({ onSessionChanged }: { onSessionChanged?: () => void
               <p className="auth-center auth-hint">{t('auth.codeExpiresIn', { time: formatCountdown(codeLeft) })}</p>
             </>
           )}
+          {onContinueToPanel ? (
+            <button type="button" className="btn btn-block auth-submit" onClick={onContinueToPanel}>
+              {t('auth.continueToPanel')}
+            </button>
+          ) : null}
         </Card>
       </div>
     );

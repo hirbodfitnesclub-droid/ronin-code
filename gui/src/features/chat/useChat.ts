@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, openStream, type ActivityKind, type ChangedFile, type StreamEvent } from '../../lib/api';
-import { bannerForTurnError } from '../../lib/turnErrors';
+import { bannerForTurnError, looksLikeRawHtml, safeTurnText } from '../../lib/turnErrors';
 import { defaultEffort, hasFast, modelById, pickerEfforts } from '../../lib/models';
 import type { StringKey } from '../../lib/i18n';
 import type { TimelineItem } from './types';
@@ -115,7 +115,10 @@ export function useChat(opts: ChatOptions) {
       setItems((prev) => {
         let next = prev;
         if (errorMessage) {
-          next = [...next, { kind: 'message', id: id(), role: 'error' as const, text: errorMessage }];
+          /* A raw HTML / raw error payload is never message content:
+             it becomes the localised generic turn error instead. */
+          const text = safeTurnText(errorMessage, opts.t('app.genericTurnError'));
+          next = [...next, { kind: 'message', id: id(), role: 'error' as const, text }];
         }
         // A building plan completes with the turn.
         next = next.map((it) =>
@@ -179,14 +182,22 @@ export function useChat(opts: ChatOptions) {
         case 'assistant_message': {
           if (streamingIdRef.current === null) streamingIdRef.current = id();
           const sid = streamingIdRef.current;
+          /* A final "reply" that is a raw HTML document is a
+             fetched/provider error page, not a reply: show it as the
+             localised generic error, in the error slot. */
+          const rawHtml = looksLikeRawHtml(ev.text);
+          const text = rawHtml ? opts.t('app.genericTurnError') : ev.text;
           setItems((prev) => {
             const idx = prev.findIndex((it) => it.kind === 'message' && it.id === sid);
             if (idx === -1) {
-              return [...prev, { kind: 'message', id: sid, role: 'assistant', text: ev.text }];
+              return [
+                ...prev,
+                { kind: 'message', id: sid, role: rawHtml ? ('error' as const) : ('assistant' as const), text },
+              ];
             }
             const next = [...prev];
             const cur = next[idx];
-            if (cur.kind === 'message') next[idx] = { ...cur, text: ev.text };
+            if (cur.kind === 'message') next[idx] = { ...cur, ...(rawHtml ? { role: 'error' as const } : {}), text };
             return next;
           });
           break;

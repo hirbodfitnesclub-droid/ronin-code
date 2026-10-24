@@ -54,6 +54,7 @@ export const fa: Record<StringKey, string> = {
   'auth.fromAppBanner': 'این ورود برای اپ دسکتاپ رونین کده — بعد از ورود، کد بازگشت رو توی اپ وارد کن.',
   'auth.resendInClock': 'ارسال دوباره کد در {time}',
   'auth.getConnectionCode': 'دریافت کد اتصال',
+  'auth.continueToPanel': 'به‌جاش برو به پنل',
   'auth.gettingCode': 'در حال دریافت کد…',
   'auth.codeExpiresIn': 'این کد تا {time} دیگر منقضی می‌شه',
   'auth.codeExpired': 'این کد منقضی شده.',

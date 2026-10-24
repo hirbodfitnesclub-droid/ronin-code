@@ -18,7 +18,8 @@ const { compressToolText, pickKey, isFailoverError } = await import("../src/rout
 const { resolveSubscriptionTransport, subscriptionProviderBaseUrlOf } = await import("../src/router.js");
 const { loadConfig } = await import("../src/config.js");
 const { priceTurn } = await import("../src/cost.js");
-const { redactSecrets, redactKnownSecrets, isEnvPath, collectSecretValues } = await import("../src/guard.js");
+const { redactSecrets, redactKnownSecrets, isEnvPath, collectSecretValues, fetchedErrorPageNote } = await import("../src/guard.js");
+const { cleanError, looksLikeRawHtml } = await import("../src/util.js");
 const { classifyProxyError } = await import("../src/router.js");
 const { recordKeyUse } = await import("../src/usage.js");
 const { buildZip } = await import("../src/publish.js");
@@ -156,6 +157,54 @@ test("classify: suspended beats the generic 403 fallback", () => {
   assert.equal(classifyProxyError("403 account_suspended"), "account_suspended");
   assert.equal(classifyProxyError("403"), "model_disabled");
   assert.equal(classifyProxyError("402 Payment Required"), "insufficient_credit");
+});
+
+// ---------------- raw HTML payloads (Bug 3: Russian 404 page in chat) ----------------
+
+// The owner's fixture, minimised: a gateway 404 page in Russian that
+// arrived as a turn error / assistant text and was rendered verbatim.
+const HTML_404_RU =
+  '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>404 Not Found</title></head>' +
+  "<body><h1>404</h1><p>Страница не найдена</p></body></html>";
+
+test("rawhtml: an HTML document is detected, plain errors and fenced code are not", () => {
+  assert.equal(looksLikeRawHtml(HTML_404_RU), true);
+  assert.equal(looksLikeRawHtml(`404: ${HTML_404_RU}`), true);
+  assert.equal(looksLikeRawHtml("The provider returned an error."), false);
+  assert.equal(looksLikeRawHtml("Use a <div> wrapper for the layout"), false);
+  assert.equal(looksLikeRawHtml("```html\n" + HTML_404_RU + "\n```"), false);
+  assert.equal(looksLikeRawHtml(""), false);
+  assert.equal(looksLikeRawHtml(null), false);
+});
+
+test("rawhtml: cleanError replaces an HTML error page with a human message, keeping only the status", () => {
+  const out = cleanError(new Error(HTML_404_RU));
+  assert.equal(out, "The provider returned an error (404). Please try again.");
+  assert.ok(!out.includes("<html"));
+  assert.ok(!out.includes("Страница"));
+  const noStatus = cleanError(new Error('<!DOCTYPE html><html><head><title>Oops</title></head><body>x</body></html>'));
+  assert.equal(noStatus, "The provider returned an error page instead of a reply. Please try again.");
+});
+
+test("rawhtml: cleanError leaves ordinary errors untouched", () => {
+  assert.equal(cleanError(new Error("Model is not available for this provider.")), "Model is not available for this provider.");
+});
+
+test("rawhtml: a sanitised HTML 402 page still classifies as insufficient_credit", () => {
+  const page402 = HTML_404_RU.replaceAll("404", "402");
+  assert.equal(classifyProxyError(cleanError(new Error(page402))), "insufficient_credit");
+  const page503 = HTML_404_RU.replaceAll("404", "503");
+  assert.equal(isFailoverError(cleanError(new Error(page503))), true);
+});
+
+test("rawhtml: a fetched error page becomes a failure note for the model, a normal page does not", () => {
+  const note = fetchedErrorPageNote(HTML_404_RU);
+  assert.match(note, /HTTP 404 error page/);
+  assert.match(note, /Treat this fetch as failed/);
+  assert.ok(!note.includes("<html"));
+  const normalPage = '<!DOCTYPE html><html><head><title>Welcome</title></head><body><h1>Hi</h1></body></html>';
+  assert.equal(fetchedErrorPageNote(normalPage), null);
+  assert.equal(fetchedErrorPageNote("plain shell output"), null);
 });
 
 // ---------------- .env detection ----------------
