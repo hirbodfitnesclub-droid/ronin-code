@@ -280,6 +280,11 @@ export async function handleApi(req, res, url) {
         }
       }
     }
+    if (body.subscriptionTransport !== undefined) {
+      if (body.subscriptionTransport === "direct" || body.subscriptionTransport === "relay") {
+        config.subscriptionTransport = body.subscriptionTransport;
+      }
+    }
     saveConfig();
     return sendJson(res, 200, { ok: true, provider: config.provider, model: currentModel(), providers: providersView() });
   }

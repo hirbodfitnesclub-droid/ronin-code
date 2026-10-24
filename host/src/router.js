@@ -45,13 +45,24 @@ export async function testProviderKey(providerId, apiKey, baseUrl) {
 }
 
 // ---------- Ronin subscription provider ----------
-// Built-in provider backed by the Ronin server's relay
-// (POST /v1/chat/completions on the account server). It is NOT a BYOK
+// Built-in provider for subscription turns. It is NOT a BYOK
 // provider: no user-supplied key is ever involved. Phase 2 dual-auth
 // (design §5.3 / §6.2): in per-user mode the credential resolved at
 // request time is the user's own delegated provider key (stored by
 // AuthManager in the CredentialStore); in shared mode it is the
-// session access token, exactly as in v1. The relay accepts both.
+// session access token, exactly as in v1.
+//
+// Transport (Vercel consolidation): with config
+// `subscriptionTransport: 'direct'` (the default), a per-user turn
+// goes DIRECTLY from this host to the provider — POST
+// {providerBaseUrl}/chat/completions with the delegated key — where
+// providerBaseUrl was delivered by the credential endpoint alongside
+// the key. The primary provider key is never involved. Transport
+// 'relay', shared mode, or a credential without providerBaseUrl
+// (older servers) all keep the v1 relay path exactly:
+// POST {serverUrl}/v1/chat/completions, which accepts both
+// credentials. Only the base URL (and therefore the endpoint) and
+// the credential differ; the streaming path downstream is shared.
 
 export const SUBSCRIPTION_PROVIDER_ID = "ronin-subscription";
 
@@ -64,6 +75,58 @@ export function subscriptionRoutingModeOf(authManager) {
   }
   const sub = typeof authManager.state === "function" ? authManager.state()?.subscription : null;
   return sub?.routingMode === "per_user" ? "per_user" : "shared";
+}
+
+/** The provider base URL stored alongside the delegated key, or
+ *  null when the server never delivered one. Tolerates minimal test
+ *  doubles. Invalid / non-http(s) values are treated as absent, so
+ *  the caller falls back to the relay. */
+export function subscriptionProviderBaseUrlOf(authManager) {
+  if (!authManager) return null;
+  let raw = null;
+  if (typeof authManager.getSubscriptionProviderBaseUrl === "function") {
+    raw = authManager.getSubscriptionProviderBaseUrl();
+  } else if (typeof authManager.getProviderBaseUrl === "function") {
+    raw = authManager.getProviderBaseUrl();
+  } else if (typeof authManager.providerBaseUrl === "string") {
+    raw = authManager.providerBaseUrl;
+  }
+  if (typeof raw !== "string" || !raw) return null;
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+  } catch {
+    return null;
+  }
+  return trimmed;
+}
+
+/** The configured subscription transport: host config
+ *  `subscriptionTransport` ('direct' | 'relay', default 'direct'); a
+ *  manager may override it (test doubles). */
+export function subscriptionTransportConfigOf(authManager) {
+  if (authManager) {
+    if (typeof authManager.subscriptionTransport === "function") {
+      const v = authManager.subscriptionTransport();
+      if (v === "direct" || v === "relay") return v;
+    } else if (authManager.subscriptionTransport === "direct" || authManager.subscriptionTransport === "relay") {
+      return authManager.subscriptionTransport;
+    }
+  }
+  return config.subscriptionTransport === "relay" ? "relay" : "direct";
+}
+
+/**
+ * Resolve the transport for one subscription attempt:
+ * 'direct' only when routing is per-user, the config flag is
+ * 'direct', AND a provider base URL is on hand. Everything else is
+ * 'relay' — the backward-compatible path.
+ */
+export function resolveSubscriptionTransport(authManager, routingMode, providerBaseUrl) {
+  if (routingMode !== "per_user") return "relay";
+  if (subscriptionTransportConfigOf(authManager) !== "direct") return "relay";
+  return providerBaseUrl ? "direct" : "relay";
 }
 
 export const SUBSCRIPTION_PROVIDER = {
@@ -85,14 +148,24 @@ export const SUBSCRIPTION_PROVIDER = {
     }
     return authManager.ensureFreshAccess();
   },
+  // Relay base URL (v1 path). Direct attempts override this with the
+  // provider base URL in buildSubscriptionAttempt.
   baseUrl: (authManager) => `${authManager.serverUrl()}/v1`,
+  directBaseUrl: (authManager) => subscriptionProviderBaseUrlOf(authManager),
 };
 
 export const catalogModel = (modelId) => CATALOG.find((m) => m.id === modelId) || null;
 
 export async function buildSubscriptionAttempt(authManager, { modelId, effort, fast } = {}) {
   const routingMode = subscriptionRoutingModeOf(authManager);
-  const apiKey = await SUBSCRIPTION_PROVIDER.resolveApiKey(authManager);
+  // Whether a delegated key was already on hand BEFORE resolving:
+  // the direct-transport upgrade fetch below must not double-fetch
+  // when the resolve itself just fetched the credential.
+  const hadKeyBefore =
+    routingMode === "per_user" && typeof authManager.getSubscriptionKey === "function"
+      ? Boolean(authManager.getSubscriptionKey())
+      : false;
+  let apiKey = await SUBSCRIPTION_PROVIDER.resolveApiKey(authManager);
   if (!apiKey) {
     if (routingMode === "per_user") {
       // Key still provisioning (pending_create / none): a transient
@@ -106,18 +179,44 @@ export async function buildSubscriptionAttempt(authManager, { modelId, effort, f
     err.code = "login_required";
     throw err;
   }
+  // Transport selection. Direct requires a provider base URL; a key
+  // stored before the server started delivering one (upgrade case)
+  // triggers exactly ONE credential re-fetch here to try to pick the
+  // URL up — the credential endpoint is never the chat relay, so a
+  // failed/absent URL still falls back to the relay below.
+  let providerBaseUrl = subscriptionProviderBaseUrlOf(authManager);
+  if (
+    routingMode === "per_user" &&
+    hadKeyBefore &&
+    !providerBaseUrl &&
+    subscriptionTransportConfigOf(authManager) === "direct" &&
+    typeof authManager.refreshSubscriptionCredential === "function"
+  ) {
+    try { await authManager.refreshSubscriptionCredential(); } catch {}
+    providerBaseUrl = subscriptionProviderBaseUrlOf(authManager);
+    // The re-fetch may also have rotated the key — use the fresh one.
+    if (typeof authManager.getSubscriptionKey === "function") {
+      apiKey = authManager.getSubscriptionKey() || apiKey;
+    }
+  }
+  const transport = resolveSubscriptionTransport(authManager, routingMode, providerBaseUrl);
   const meta = catalogModel(modelId);
   const { thinkingLevel, thinkingLevelMap } = effortToThinking(effort, meta);
   return {
     providerId: SUBSCRIPTION_PROVIDER_ID,
     apiKey,
     modelId,
-    baseUrl: SUBSCRIPTION_PROVIDER.baseUrl(authManager),
+    // Direct: the provider base URL (the engine appends
+    // /chat/completions, same as for the relay's /v1 base). Relay:
+    // the Ronin server's /v1, exactly as in v1.
+    baseUrl: transport === "direct" ? providerBaseUrl : SUBSCRIPTION_PROVIDER.baseUrl(authManager),
     modelMeta: meta,
     thinkingLevel,
     thinkingLevelMap,
     fast: fast === true,
     routingMode,
+    transport,
+    providerBaseUrl: transport === "direct" ? providerBaseUrl : null,
   };
 }
 

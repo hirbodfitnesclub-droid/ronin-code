@@ -47,6 +47,7 @@ function makeStubServer({ ttlSec = 3600 } = {}) {
       keyStatus: "active",
       delegatedKey: FAKE_KEY,
       tokenLimitIssued: 20_000_000,
+      providerBaseUrl: null,
     },
     credentialHttpStatus: 200,
     credentialError: "account_disabled",
@@ -124,6 +125,7 @@ function makeStubServer({ ttlSec = 3600 } = {}) {
         tokenLimitIssued: c.tokenLimitIssued,
         issuedAt: "2026-10-23T00:00:00.000Z",
         ...(withKey && c.delegatedKey ? { delegatedKey: c.delegatedKey } : {}),
+        ...(c.providerBaseUrl ? { providerBaseUrl: c.providerBaseUrl } : {}),
       });
     }
     if (pathname === "/api/auth/logout") {
@@ -591,6 +593,138 @@ test("attempt: a fetchable key is picked up on first subscription use", async ()
   const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
   assert.equal(attempt.apiKey, FAKE_KEY);
   assert.equal(stub.calls.credential, 1);
+});
+
+// ---------------- direct transport: providerBaseUrl (Vercel consolidation) ----------------
+
+const FAKE_PROVIDER_URL = "https://provider.test/v1";
+
+test("direct: credential providerBaseUrl round-trips in the store alongside the key", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-store-direct-"));
+  const file = path.join(dir, "credentials.json");
+  const store = new CredentialStore(file);
+  store.save({
+    accessToken: "a1",
+    refreshToken: "r1",
+    deviceId: "dev-1",
+    user: { id: "u1" },
+    serverUrl: "http://ronin.test",
+    subscriptionKey: FAKE_KEY,
+    subscriptionKeyFingerprint: subscriptionKeyFingerprint(FAKE_KEY),
+    subscriptionKeyStatus: "active",
+    routingMode: "per_user",
+    providerBaseUrl: FAKE_PROVIDER_URL,
+  });
+  assert.equal(store.load().providerBaseUrl, FAKE_PROVIDER_URL);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // A save without the field clears it with the key (same lifecycle).
+  store.save({ accessToken: "a1", refreshToken: "r1", deviceId: "dev-1", user: { id: "u1" }, serverUrl: "http://ronin.test" });
+  assert.equal(store.load().providerBaseUrl, null);
+});
+
+test("direct: credential fetch persists providerBaseUrl; the attempt goes direct to the provider", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  stub.state.credential = { ...stub.state.credential, providerBaseUrl: FAKE_PROVIDER_URL };
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().providerBaseUrl, FAKE_PROVIDER_URL);
+  assert.equal(manager.getSubscriptionProviderBaseUrl(), FAKE_PROVIDER_URL);
+  const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(attempt.transport, "direct");
+  assert.equal(attempt.baseUrl, FAKE_PROVIDER_URL);
+  assert.equal(attempt.providerBaseUrl, FAKE_PROVIDER_URL);
+  assert.equal(attempt.apiKey, FAKE_KEY);
+});
+
+test("direct: a credential without providerBaseUrl falls back to the relay (older server)", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().providerBaseUrl, null);
+  const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(attempt.transport, "relay");
+  assert.equal(attempt.baseUrl, "http://ronin.test/v1");
+  assert.equal(attempt.providerBaseUrl, null);
+});
+
+test("direct: config subscriptionTransport 'relay' keeps the relay even with a provider URL", async () => {
+  const { config } = await import("../src/config.js");
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  stub.state.credential = { ...stub.state.credential, providerBaseUrl: FAKE_PROVIDER_URL };
+  const { manager } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  const prev = config.subscriptionTransport;
+  config.subscriptionTransport = "relay";
+  try {
+    const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+    assert.equal(attempt.transport, "relay");
+    assert.equal(attempt.baseUrl, "http://ronin.test/v1");
+    assert.equal(attempt.apiKey, FAKE_KEY);
+  } finally {
+    config.subscriptionTransport = prev;
+  }
+});
+
+test("direct: a stored key without a URL picks the URL up with one credential re-fetch on first use", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().providerBaseUrl, null);
+  // Server starts delivering the URL after the key was stored.
+  stub.state.credential = { ...stub.state.credential, providerBaseUrl: FAKE_PROVIDER_URL };
+  const callsBefore = stub.calls.credential;
+  const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(stub.calls.credential, callsBefore + 1, "exactly one upgrade re-fetch");
+  assert.equal(attempt.transport, "direct");
+  assert.equal(attempt.baseUrl, FAKE_PROVIDER_URL);
+  // Second attempt: URL is now stored, no further fetch.
+  const attempt2 = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(stub.calls.credential, callsBefore + 1);
+  assert.equal(attempt2.transport, "direct");
+});
+
+test("direct: frozen status clears providerBaseUrl together with the key", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  stub.state.credential = { ...stub.state.credential, providerBaseUrl: FAKE_PROVIDER_URL };
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().providerBaseUrl, FAKE_PROVIDER_URL);
+  perUserAccount(stub, { keyStatus: "frozen", limit: 99_000_000 });
+  stub.state.credential = { ...stub.state.credential, keyStatus: "frozen", tokenLimitIssued: 99_000_000 };
+  await manager.revalidate();
+  assert.equal(store.load().subscriptionKey, null);
+  assert.equal(store.load().providerBaseUrl, null);
+  assert.equal(manager.getSubscriptionProviderBaseUrl(), null);
+});
+
+test("direct: rollback to shared mode clears providerBaseUrl with the key", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  stub.state.credential = { ...stub.state.credential, providerBaseUrl: FAKE_PROVIDER_URL };
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().providerBaseUrl, FAKE_PROVIDER_URL);
+  stub.state.credential = { ...stub.state.credential, routingMode: "shared" };
+  await manager.fetchSubscriptionCredential();
+  assert.equal(store.load().subscriptionKey, null);
+  assert.equal(store.load().providerBaseUrl, null);
+});
+
+test("direct: a malformed providerBaseUrl from the server is ignored (relay fallback, no crash)", async () => {
+  const stub = makeStubServer();
+  perUserAccount(stub);
+  stub.state.credential = { ...stub.state.credential, providerBaseUrl: "ftp://provider.test/v1" };
+  const { manager, store } = makeManager(stub);
+  await manager.exchangeCode("good-code");
+  assert.equal(store.load().providerBaseUrl, null);
+  const attempt = await buildSubscriptionAttempt(manager, { modelId: "gpt-6-luna" });
+  assert.equal(attempt.transport, "relay");
+  assert.equal(attempt.baseUrl, "http://ronin.test/v1");
 });
 
 // ---------------- proxy error classification (design §6.4) ----------------
