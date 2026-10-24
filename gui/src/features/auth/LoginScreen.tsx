@@ -1,12 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
+import {
+  formatHandoffCode,
+  HANDOFF_CODE_LENGTH,
+  handoffCodeComplete,
+  normalizeHandoffCode,
+  normalizeOtp,
+  OTP_LENGTH,
+  otpComplete,
+} from '../../lib/codeInput';
 import { useLang, type StringKey } from '../../lib/i18n';
 import Logo from '../../components/ui/Logo';
+import SegmentedInput from './SegmentedInput';
 
-/* Ronin Code — login gate. Shown when the host reports an account is
-   required and nobody is signed in. Three paths, one calm card:
-   (1) continue in the browser panel, then paste the connection code;
-   (2) the connection code itself; (3) in-app phone + OTP. */
+/* Ronin Code — login gate (RDX-01). Four first-class states in the
+   board-03 visual language, with ONLY the auth methods that exist:
+   (1) start — primary browser sign-in CTA with the two fallbacks
+       discoverable from the beginning;
+   (2) waiting — the browser is open; the app polls the host session
+       so a completed panel sign-in (deep link or not) lands here
+       automatically; cancel + both fallbacks stay reachable;
+   (3) manual return code — segmented RNC-XXXX-XXXX input with
+       distinct invalid / expired / used errors and a get-new-code path;
+   (4) in-app OTP — phone, 6-digit boxes, resend timer, edit number.
+   No Google / email / password / guest path exists by design. */
 
 const CODE_ERROR_KEYS: Record<string, StringKey> = {
   invalid_code: 'auth.errorInvalidCode',
@@ -29,42 +46,78 @@ function errorKey(err: unknown, table: Record<string, StringKey>): StringKey {
   return 'auth.errorGeneric';
 }
 
+type Phase = 'start' | 'waiting' | 'code' | 'otp-phone' | 'otp-code';
+
+const RESEND_SECONDS = 60;
+
 interface Props {
   onLoggedIn: () => void;
 }
 
 export default function LoginScreen({ onLoggedIn }: Props) {
   const { t } = useLang();
-  const [code, setCode] = useState('');
-  const [codeError, setCodeError] = useState<StringKey | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const [phase, setPhase] = useState<Phase>('start');
   const [opening, setOpening] = useState(false);
 
+  const [codeBody, setCodeBody] = useState('');
+  const [codeError, setCodeError] = useState<StringKey | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
   const [phone, setPhone] = useState('');
-  const [otpStep, setOtpStep] = useState<'phone' | 'code'>('phone');
   const [otp, setOtp] = useState('');
   const [otpError, setOtpError] = useState<StringKey | null>(null);
   const [otpBusy, setOtpBusy] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+
+  /* While waiting for the browser flow, poll the host session: the
+     deep-link return (or a panel session completed any other way)
+     flips authState.loggedIn and we hand over to the app. */
+  useEffect(() => {
+    if (phase !== 'waiting') return;
+    let live = true;
+    const timer = window.setInterval(() => {
+      void api
+        .authState()
+        .then((s) => {
+          if (live && s.loggedIn) onLoggedIn();
+        })
+        .catch(() => {
+          /* host unreachable — the manual paths below still work */
+        });
+    }, 2500);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [phase, onLoggedIn]);
+
+  /* OTP resend countdown. */
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = window.setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendIn]);
 
   const openPanel = async () => {
     setOpening(true);
     try {
       const res = await api.openPanel();
       if (res?.url) window.open(res.url, '_blank', 'noopener');
+      setPhase('waiting');
     } catch {
-      /* the hint below the button explains the manual path */
+      /* browser did not open — go straight to the manual code path */
+      setPhase('code');
     } finally {
       setOpening(false);
     }
   };
 
   const submitCode = async () => {
-    const value = code.trim().toUpperCase();
-    if (!value || connecting) return;
+    if (!handoffCodeComplete(codeBody) || connecting) return;
     setCodeError(null);
     setConnecting(true);
     try {
-      await api.exchangeCode(value);
+      await api.exchangeCode(formatHandoffCode(codeBody));
       onLoggedIn();
     } catch (err) {
       setCodeError(errorKey(err, CODE_ERROR_KEYS));
@@ -80,7 +133,8 @@ export default function LoginScreen({ onLoggedIn }: Props) {
     try {
       await api.requestOtp(phone.trim());
       setOtp('');
-      setOtpStep('code');
+      setResendIn(RESEND_SECONDS);
+      setPhase('otp-code');
     } catch (err) {
       setOtpError(errorKey(err, OTP_ERROR_KEYS));
     } finally {
@@ -89,7 +143,7 @@ export default function LoginScreen({ onLoggedIn }: Props) {
   };
 
   const verifyOtp = async () => {
-    if (otp.trim().length !== 6 || otpBusy) return;
+    if (!otpComplete(otp) || otpBusy) return;
     setOtpError(null);
     setOtpBusy(true);
     try {
@@ -101,6 +155,8 @@ export default function LoginScreen({ onLoggedIn }: Props) {
       setOtpBusy(false);
     }
   };
+
+  const codeStale = codeError === 'auth.errorCodeExpired' || codeError === 'auth.errorCodeUsed';
 
   return (
     <div className="login-screen">
@@ -114,45 +170,102 @@ export default function LoginScreen({ onLoggedIn }: Props) {
         <h1>{t('auth.title')}</h1>
         <p className="login-sub">{t('auth.subtitle')}</p>
 
-        <button type="button" className="btn btn--primary login-browser-btn" onClick={() => void openPanel()} disabled={opening}>
-          {t('auth.continueBrowser')}
-        </button>
-        <p className="login-hint">{t('auth.browserHint')}</p>
+        {phase === 'start' && (
+          <>
+            <button
+              type="button"
+              className="btn btn--primary login-browser-btn"
+              onClick={() => void openPanel()}
+              disabled={opening}
+            >
+              {t('auth.signInBrowser')}
+            </button>
+            <p className="login-hint">{t('auth.browserHint')}</p>
+            <div className="auth-alt-links">
+              <button type="button" className="auth-alt-link" onClick={() => setPhase('code')}>
+                {t('auth.useManualCode')}
+              </button>
+              <button type="button" className="auth-alt-link" onClick={() => setPhase('otp-phone')}>
+                {t('auth.useOtp')}
+              </button>
+            </div>
+          </>
+        )}
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void submitCode();
-          }}
-        >
-          <label className="field">
-            <span className="field-label">{t('auth.codeLabel')}</span>
-            <input
-              type="text"
-              dir="ltr"
-              autoComplete="off"
-              spellCheck={false}
-              className="login-code-input"
-              value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              placeholder={t('auth.codePlaceholder')}
+        {phase === 'waiting' && (
+          <>
+            <div className="login-wait" role="status">
+              <div className="home-orb login-wait-orb" aria-hidden="true">
+                <span />
+              </div>
+              <p className="login-wait-title">{t('auth.waitingTitle')}</p>
+              <p className="login-hint">{t('auth.waitingSub')}</p>
+            </div>
+            <button type="button" className="btn btn--ghost login-connect-btn" onClick={() => setPhase('start')}>
+              {t('auth.cancel')}
+            </button>
+            <div className="auth-alt-links">
+              <button type="button" className="auth-alt-link" onClick={() => setPhase('code')}>
+                {t('auth.useManualCode')}
+              </button>
+              <button type="button" className="auth-alt-link" onClick={() => setPhase('otp-phone')}>
+                {t('auth.useOtp')}
+              </button>
+            </div>
+          </>
+        )}
+
+        {phase === 'code' && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitCode();
+            }}
+          >
+            <p className="login-hint login-hint--top">{t('auth.codeHint')}</p>
+            <SegmentedInput
+              value={codeBody}
+              length={HANDOFF_CODE_LENGTH}
+              groupAfter={4}
+              prefix="RNC"
+              accept={normalizeHandoffCode}
+              onChange={(next) => {
+                setCodeBody(next);
+                setCodeError(null);
+              }}
+              ariaLabel={t('auth.codeLabel')}
+              autoFocus
             />
-          </label>
-          {codeError && (
-            <p className="test-result test-result--bad" role="alert">
-              {t(codeError)}
-            </p>
-          )}
-          <button type="submit" className="btn btn--ghost login-connect-btn" disabled={connecting || !code.trim()}>
-            {connecting ? t('auth.connecting') : t('auth.connect')}
-          </button>
-        </form>
+            {codeError && (
+              <p className="test-result test-result--bad" role="alert">
+                {t(codeError)}
+              </p>
+            )}
+            <button
+              type="submit"
+              className="btn btn--primary login-connect-btn"
+              disabled={connecting || !handoffCodeComplete(codeBody)}
+            >
+              {connecting ? t('auth.connecting') : t('auth.verify')}
+            </button>
+            {codeStale ? (
+              <button
+                type="button"
+                className="btn btn--ghost login-connect-btn"
+                onClick={() => void openPanel()}
+                disabled={opening}
+              >
+                {t('auth.getNewCode')}
+              </button>
+            ) : (
+              <button type="button" className="auth-alt-link auth-alt-link--center" onClick={() => setPhase('start')}>
+                {t('auth.back')}
+              </button>
+            )}
+          </form>
+        )}
 
-        <div className="login-divider">
-          <span>{t('auth.orDivider')}</span>
-        </div>
-
-        {otpStep === 'phone' ? (
+        {phase === 'otp-phone' && (
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -165,6 +278,7 @@ export default function LoginScreen({ onLoggedIn }: Props) {
                 type="tel"
                 dir="ltr"
                 autoComplete="tel"
+                autoFocus
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder={t('auth.phonePlaceholder')}
@@ -175,38 +289,68 @@ export default function LoginScreen({ onLoggedIn }: Props) {
                 {t(otpError)}
               </p>
             )}
-            <button type="submit" className="btn btn--ghost login-connect-btn" disabled={otpBusy || !phone.trim()}>
+            <button type="submit" className="btn btn--primary login-connect-btn" disabled={otpBusy || !phone.trim()}>
               {otpBusy ? t('auth.sending') : t('auth.sendCode')}
             </button>
+            <button type="button" className="auth-alt-link auth-alt-link--center" onClick={() => setPhase('start')}>
+              {t('auth.back')}
+            </button>
           </form>
-        ) : (
+        )}
+
+        {phase === 'otp-code' && (
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void verifyOtp();
             }}
           >
-            <label className="field">
-              <span className="field-label">{t('auth.otpLabel')}</span>
-              <input
-                type="text"
-                dir="ltr"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                className="login-code-input"
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="123456"
-              />
-            </label>
+            <p className="login-hint login-hint--top">
+              {t('auth.otpSentTo', { phone: phone.trim() })}
+            </p>
+            <SegmentedInput
+              value={otp}
+              length={OTP_LENGTH}
+              accept={normalizeOtp}
+              onChange={(next) => {
+                setOtp(next);
+                setOtpError(null);
+              }}
+              ariaLabel={t('auth.otpLabel')}
+              autoFocus
+            />
             {otpError && (
               <p className="test-result test-result--bad" role="alert">
                 {t(otpError)}
               </p>
             )}
-            <button type="submit" className="btn btn--ghost login-connect-btn" disabled={otpBusy || otp.length !== 6}>
+            <button
+              type="submit"
+              className="btn btn--primary login-connect-btn"
+              disabled={otpBusy || !otpComplete(otp)}
+            >
               {otpBusy ? t('auth.verifying') : t('auth.verify')}
             </button>
+            <div className="auth-alt-links">
+              <button
+                type="button"
+                className="auth-alt-link"
+                onClick={() => void requestOtp()}
+                disabled={otpBusy || resendIn > 0}
+              >
+                {resendIn > 0 ? t('auth.resendIn', { seconds: resendIn }) : t('auth.resend')}
+              </button>
+              <button
+                type="button"
+                className="auth-alt-link"
+                onClick={() => {
+                  setOtpError(null);
+                  setPhase('otp-phone');
+                }}
+              >
+                {t('auth.editNumber')}
+              </button>
+            </div>
           </form>
         )}
       </div>

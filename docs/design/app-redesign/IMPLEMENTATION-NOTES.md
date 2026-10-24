@@ -65,3 +65,37 @@ reference only. GUI only — no host/server/web changes.
   omitted rather than faked.
 
 **Gates**: `npm run typecheck` ✓ · `npm test` 27/27 ✓ · `npm run build` ✓
+
+---
+
+## Phase 2 — Auth (RDX-01) + Onboarding (RDX-02)
+
+**Built**
+- Login rebuilt as five explicit states in board 03's visual language:
+  **start** (primary «ورود با مرورگر» CTA + both fallbacks discoverable from
+  the first screen), **waiting** (calm pulsing indicator, cancel, fallbacks
+  stay reachable — and the app now *polls* `GET /api/auth` every 2.5s while
+  waiting, so a completed panel sign-in lands automatically even when the
+  deep link is missed), **manual code** (segmented 8-box `RNC-XXXX-XXXX`
+  input: paste anywhere distributes, arrows/backspace navigate; distinct
+  invalid vs expired vs used errors in PRD §8 copy; expired/used swaps the
+  back link for a «دریافت کد جدید» action that reopens the panel),
+  **OTP phone**, **OTP code** (6 digit boxes, 60s resend countdown then a
+  real resend, edit-number path). No Google/email/password/guest anywhere.
+- New pure helpers `lib/codeInput.ts` (normalise/format/completeness for the
+  handoff code + OTP) with 4 new unit tests.
+- Onboarding collapsed from the 2-step wizard to **one page**: models grid
+  (provider-grouped cards, existing `ModelMultiSelect`) beside a side column
+  with **Dark/Light theme cards** (live preview on pick, token-faithful
+  mini-previews), the existing language cards, and the start action.
+  Honest disabled guidance when no model is picked; when the account has
+  **neither credit nor a BYOK key**, a note offers the two real doors —
+  buy credit in the panel / finish into Settings to add a key.
+
+**Deviations**
+- Board 02's right column also shows plan/account teasers — omitted: no
+  plans exist and the account lives in the panel (PRD authority order).
+- The waiting state's auto-return depends on the host session flipping;
+  polling is additive to the existing deep-link path, not a replacement.
+
+**Gates**: `npm run typecheck` ✓ · `npm test` 31/31 ✓ · `npm run build` ✓

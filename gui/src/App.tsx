@@ -330,9 +330,11 @@ export default function App() {
           {showOnboarding && (
             <Onboarding
               status={status}
+              providers={providers}
               onLanguage={setLangOverride}
-              onDone={() => {
+              onDone={(openSettings) => {
                 setOnboardingDismissed(true);
+                if (openSettings) setSettingsOpen(true);
                 void refreshMeta();
               }}
             />

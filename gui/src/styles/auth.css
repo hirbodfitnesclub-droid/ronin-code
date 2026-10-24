@@ -73,3 +73,93 @@
 }
 .account-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
 @media (max-width: 1100px) { .account-chip-text { display: none; } }
+
+/* RDX-01 — auth states */
+.login-browser-btn {
+  min-height: 36px;
+  font-size: 13.5px;
+}
+.login-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.login-wait-orb {
+  width: 44px;
+  height: 44px;
+  margin: 0;
+}
+.login-wait-orb span {
+  width: 20px;
+  height: 20px;
+}
+.login-wait-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.login-hint--top {
+  margin: 0 0 12px;
+  text-align: start;
+}
+.auth-alt-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.auth-alt-link {
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--accent-bright);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.auth-alt-link:hover:not(:disabled) { text-decoration: underline; }
+.auth-alt-link:disabled { color: var(--text-faint); cursor: default; }
+.auth-alt-link--center {
+  display: block;
+  margin: 14px auto 0;
+}
+
+/* Segmented one-time-code input (RDX-01) */
+.seg-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  margin: 4px 0 12px;
+}
+.seg-prefix {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-inline-end: 2px;
+}
+.seg-gap { width: 8px; flex: none; }
+.seg-box {
+  width: 34px;
+  height: 40px;
+  text-align: center;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  caret-color: var(--accent);
+}
+.seg-box:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
