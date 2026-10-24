@@ -17,15 +17,15 @@ import { dateStr } from './finance.js';
 export async function analyticsOverview(db, days = 30) {
   const daily = await db.many(
     `SELECT d::date AS day,
-       (SELECT count(*) FROM public.users WHERE created_at::date = d::date) AS new_users,
+       (SELECT count(*) FROM public.users WHERE (created_at AT TIME ZONE 'Asia/Tehran')::date = d::date) AS new_users,
        (SELECT COALESCE(SUM(received_amount_rials),0) FROM public.orders
-         WHERE status IN ('approved','refunded') AND reviewed_at::date = d::date) AS revenue,
+         WHERE status IN ('approved','refunded') AND (reviewed_at AT TIME ZONE 'Asia/Tehran')::date = d::date) AS revenue,
        (SELECT COALESCE(-SUM(delta_tokens),0) FROM public.ledger
-         WHERE kind = 'consume' AND created_at::date = d::date) AS consumed
-     FROM generate_series(current_date - ($1 - 1), current_date, interval '1 day') AS d ORDER BY d`,
+         WHERE kind = 'consume' AND (created_at AT TIME ZONE 'Asia/Tehran')::date = d::date) AS consumed
+     FROM generate_series((now() AT TIME ZONE 'Asia/Tehran')::date - ($1 - 1), (now() AT TIME ZONE 'Asia/Tehran')::date, interval '1 day') AS d ORDER BY d`,
     [days]);
   let runningUsers = Number((await db.one(
-    'SELECT count(*)::int AS c FROM public.users WHERE created_at::date < current_date - ($1 - 1)', [days])).c);
+    `SELECT count(*)::int AS c FROM public.users WHERE (created_at AT TIME ZONE 'Asia/Tehran')::date < (now() AT TIME ZONE 'Asia/Tehran')::date - ($1 - 1)`, [days])).c);
   const series = daily.map((r) => {
     runningUsers += Number(r.new_users);
     return {

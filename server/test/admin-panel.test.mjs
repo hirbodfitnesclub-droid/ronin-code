@@ -22,7 +22,8 @@ const PNG_1PX = Buffer.from(
   'base64');
 
 let stack, owner, user, user2, order, receiptsDir;
-const today = () => new Date().toISOString().slice(0, 10);
+// Business dates are Asia/Tehran (server contract) — never the host's TZ.
+const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tehran' }).format(new Date());
 
 async function loginAdminAs(phone) {
   await resetRateLimits(stack.db);

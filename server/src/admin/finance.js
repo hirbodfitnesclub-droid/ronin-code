@@ -49,10 +49,10 @@ async function resolveRange(db, query) {
 async function pnl(db, { from, to }) {
   const income = Number((await db.one(
     `SELECT COALESCE(SUM(received_amount_rials),0)::bigint AS s FROM public.orders
-     WHERE status IN ('approved','refunded') AND reviewed_at::date BETWEEN $1 AND $2`, [from, to])).s);
+     WHERE status IN ('approved','refunded') AND (reviewed_at AT TIME ZONE 'Asia/Tehran')::date BETWEEN $1 AND $2`, [from, to])).s);
   const refunds = Number((await db.one(
     `SELECT COALESCE(SUM(amount_rials),0)::bigint AS s FROM public.order_refunds
-     WHERE created_at::date BETWEEN $1 AND $2`, [from, to])).s);
+     WHERE (created_at AT TIME ZONE 'Asia/Tehran')::date BETWEEN $1 AND $2`, [from, to])).s);
   const expensesTotal = Number((await db.one(
     `SELECT COALESCE(SUM(amount_rials),0)::bigint AS s FROM public.expenses
      WHERE spent_on BETWEEN $1 AND $2`, [from, to])).s);
@@ -63,7 +63,7 @@ async function pnl(db, { from, to }) {
   const daily = await db.many(
     `SELECT d::date AS day,
        (SELECT COALESCE(SUM(received_amount_rials),0) FROM public.orders
-         WHERE status IN ('approved','refunded') AND reviewed_at::date = d::date) AS income,
+         WHERE status IN ('approved','refunded') AND (reviewed_at AT TIME ZONE 'Asia/Tehran')::date = d::date) AS income,
        (SELECT COALESCE(SUM(amount_rials),0) FROM public.expenses
          WHERE spent_on = d::date) AS expenses
      FROM generate_series($1::date, $2::date, interval '1 day') AS d ORDER BY d`, [from, to]);
@@ -193,12 +193,12 @@ export function registerFinanceRoutes(router, { db, cfg, guard }) {
     const lines = [['date', 'type', 'description', 'amount_rials']];
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const income = await db.many(
-      `SELECT reviewed_at::date AS d, id, pack_title, received_amount_rials AS amount FROM public.orders
-       WHERE status IN ('approved','refunded') AND reviewed_at::date BETWEEN $1 AND $2 ORDER BY reviewed_at`, [from, to]);
+      `SELECT (reviewed_at AT TIME ZONE 'Asia/Tehran')::date AS d, id, pack_title, received_amount_rials AS amount FROM public.orders
+       WHERE status IN ('approved','refunded') AND (reviewed_at AT TIME ZONE 'Asia/Tehran')::date BETWEEN $1 AND $2 ORDER BY reviewed_at`, [from, to]);
     for (const r of income) lines.push([dateStr(r.d), 'income', `order #${r.id} ${r.pack_title}`, r.amount]);
     const refunds = await db.many(
-      `SELECT created_at::date AS d, order_id, reason, amount_rials FROM public.order_refunds
-       WHERE created_at::date BETWEEN $1 AND $2 ORDER BY created_at`, [from, to]);
+      `SELECT (created_at AT TIME ZONE 'Asia/Tehran')::date AS d, order_id, reason, amount_rials FROM public.order_refunds
+       WHERE (created_at AT TIME ZONE 'Asia/Tehran')::date BETWEEN $1 AND $2 ORDER BY created_at`, [from, to]);
     for (const r of refunds) lines.push([dateStr(r.d), 'refund', `order #${r.order_id} ${r.reason}`, -Number(r.amount_rials)]);
     const expenses = await db.many(
       'SELECT spent_on AS d, category, note, amount_rials FROM public.expenses WHERE spent_on BETWEEN $1 AND $2 ORDER BY spent_on', [from, to]);
