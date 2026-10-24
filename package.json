@@ -6,7 +6,7 @@
     "build": "npm --prefix gui run build",
     "dev:gui": "npm --prefix gui run dev",
     "dev:host": "npm --prefix host run dev",
-    "install:all": "npm --prefix host install && npm --prefix gui install",
+    "install:all": "npm --prefix host install && npm --prefix gui install && npm --prefix server install",
     "serve": "npm run build && npm run start",
     "start": "npm --prefix host run start",
     "test": "npm --prefix gui test && npm --prefix host run test:unit && node host/test/e2e.mjs && npm --prefix server test",
