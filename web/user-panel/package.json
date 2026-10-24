@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -b && vite build",
+    "build": "node scripts/sync-api.mjs && tsc -b && vite build",
     "dev": "vite --port 5174",
     "preview": "vite preview --port 5174",
     "test": "node --experimental-strip-types --test test/*.test.ts",
@@ -13,6 +13,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"*.{json,mjs}\""
   },
   "dependencies": {
+    "pg": "^8.23.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

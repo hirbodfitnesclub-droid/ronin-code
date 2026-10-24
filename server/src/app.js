@@ -20,7 +20,7 @@ import { createStorage } from './storage.js';
 import { parseMultipart } from './upload.js';
 
 /** User API application (no admin surface here at all — the admin is a separate app). */
-export function createUserApp(db, cfg, sms) {
+export function createUserHandler(db, cfg, sms) {
   const storage = createStorage(cfg);
   const router = createRouter();
   const requireUser = (req) => auth.authenticate(db, cfg, bearer(req));
@@ -240,6 +240,7 @@ export function createUserApp(db, cfg, sms) {
       }
       return sendJson(res, 200, {
         ...base, delegatedKey: plain, keyFingerprint: fingerprintOf(plain), keyLast4: keyRow.key_last4,
+        providerBaseUrl: cfg.cvcBaseUrl,
       });
     }
     return sendJson(res, 200, base);
@@ -396,7 +397,11 @@ export function createUserApp(db, cfg, sms) {
   router.get('/healthz', async (req, res) => sendJson(res, 200, { ok: true, service: 'ronin-api' }));
 
   const handler = withErrorHandling((req, res) => router.handle(req, res, {}));
-  return http.createServer((req, res) => { void handler(req, res, {}); });
+  return (req, res) => { void handler(req, res, {}); };
+}
+
+export function createUserApp(db, cfg, sms) {
+  return http.createServer(createUserHandler(db, cfg, sms));
 }
 
 /**
