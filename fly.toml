@@ -13,6 +13,7 @@ kill_timeout = "10s"
 
 [build]
   dockerfile = "server/Dockerfile"
+  # Build context is the repo root (the image also builds web/admin-panel).
 
 [env]
   HOST = "0.0.0.0"

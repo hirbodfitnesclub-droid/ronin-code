@@ -1,5 +1,18 @@
 # Ronin Code API server — production image (user API + admin app processes).
-# Build from the server/ directory:  docker build -t ronin-api server/
+# Build context = REPO ROOT:  docker build -f server/Dockerfile -t ronin-api .
+# The admin process serves the admin panel's Vite build same-origin from
+# /web/admin-panel/dist (server/src/admin/app.js resolves ../../../web/…),
+# so the image includes that build output at the filesystem root level.
+
+# ── Stage 1: build the admin panel ──────────────────────────────────────────
+FROM node:22-slim AS admin-panel
+WORKDIR /build/admin-panel
+COPY web/admin-panel/package.json web/admin-panel/package-lock.json ./
+RUN npm ci
+COPY web/admin-panel/ ./
+RUN npm run build
+
+# ── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM node:22-slim
 
 ENV NODE_ENV=production \
@@ -10,14 +23,17 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 # Only runtime dependency is `pg`; install exactly from the lockfile.
-COPY package.json package-lock.json ./
+COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY src ./src
-COPY scripts ./scripts
+COPY server/src ./src
+COPY server/scripts ./scripts
+
+# Admin panel build output, at the path the admin app resolves.
+COPY --from=admin-panel /build/admin-panel/dist /web/admin-panel/dist
 
 # Receipts fallback dir (production uses Supabase Storage; harmless locally).
-RUN mkdir -p /app/data/receipts && chown -R node:node /app
+RUN mkdir -p /app/data/receipts && chown -R node:node /app /web
 USER node
 
 EXPOSE 7443 7444
