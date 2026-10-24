@@ -2,8 +2,8 @@
 
 .preview-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #0b0c10; }
 .preview-bar {
-  height: 42px; flex: none; display: flex; align-items: center; gap: 12px;
-  padding: 0 10px 0 14px; border-bottom: 1px solid var(--border);
+  height: 36px; flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 0 8px 0 12px; border-bottom: 1px solid var(--border);
 }
 .preview-dots { display: inline-flex; gap: 6px; }
 .preview-dots i { width: 9px; height: 9px; border-radius: 50%; background: #2b2f38; display: block; }
@@ -36,8 +36,8 @@
   border: 1px solid rgba(229, 72, 77, 0.3);
   animation: haloPulse 4.2s ease-out infinite;
 }
-.preview-empty-title { margin: 0; font-size: 16.5px; font-weight: 620; letter-spacing: -0.015em; color: var(--text-dim); }
-.preview-empty-sub { margin: 0; font-size: 13px; color: var(--text-faint); max-width: 340px; }
+.preview-empty-title { margin: 0; font-size: 15px; font-weight: 620; letter-spacing: -0.015em; color: var(--text-dim); }
+.preview-empty-sub { margin: 0; font-size: 12.5px; color: var(--text-faint); max-width: 340px; }
 .preview-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; background: #0b0c10; }
 .preview-reopen {
   align-self: center; border: 1px solid var(--border); border-inline-start: none;

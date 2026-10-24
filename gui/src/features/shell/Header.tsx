@@ -18,6 +18,7 @@ interface Props {
   auth?: AuthState;
   panelUrl?: string;
   onStatusRefresh: () => void;
+  onGoHome: () => void;
   onOpenProject: () => void;
   onOpenStarters: () => void;
   onOpenIdea: () => void;
@@ -26,6 +27,74 @@ interface Props {
   onToggleAuto: () => void;
   onTogglePlan: () => void;
   onOpenSettings: () => void;
+}
+
+/* Overflow menu for the app bar's lower-priority actions (RDX-04):
+   open project, starters, idea, checkpoints. Auto and Publish stay
+   visible in the bar itself, never in here. */
+function HeaderMenu(p: Props) {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open ]);
+
+  const act = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <div className="header-menu-wrap" ref={rootRef}>
+      <button
+        type="button"
+        className="icon-btn"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t('app.more')}
+        title={t('app.more')}
+      >
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <circle cx="3" cy="8" r="1.6" />
+          <circle cx="8" cy="8" r="1.6" />
+          <circle cx="13" cy="8" r="1.6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="header-menu" role="menu">
+          <button type="button" className="header-menu-item" role="menuitem" onClick={act(p.onOpenProject)}>
+            {t('app.openProject')}
+          </button>
+          <button type="button" className="header-menu-item" role="menuitem" onClick={act(() => void p.onOpenStarters())}>
+            {t('app.createStarter')}
+          </button>
+          <button type="button" className="header-menu-item" role="menuitem" onClick={act(p.onOpenIdea)}>
+            {t('app.idea')}
+          </button>
+          {p.project && (
+            <button type="button" className="header-menu-item" role="menuitem" onClick={act(p.onOpenCheckpoints)}>
+              {t('app.checkpoints')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function AccountChip({ auth, panelUrl, onStatusRefresh }: { auth: AuthState; panelUrl: string; onStatusRefresh: () => void }) {
@@ -134,7 +203,7 @@ export default function Header(p: Props) {
   const { t, fmtUsd } = useLang();
   return (
     <header className="header">
-      <div className="brand">
+      <button type="button" className="brand brand-btn" onClick={p.onGoHome} aria-label={t('nav.home')}>
         <Logo />
         <span className="wordmark">
           Ronin <span className="wordmark-accent">Code</span>
@@ -142,7 +211,7 @@ export default function Header(p: Props) {
         <span className="wordmark-fa" lang="fa" dir="rtl">
           رونین کد
         </span>
-      </div>
+      </button>
 
       <div className="header-project">
         {p.project ? (
@@ -155,25 +224,6 @@ export default function Header(p: Props) {
         ) : (
           <span className="project-path project-path--empty">{t('app.noProjectYet')}</span>
         )}
-        <button type="button" className="btn btn--ghost btn--sm" onClick={p.onOpenProject}>
-          {t('app.openProject')}
-        </button>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => void p.onOpenStarters()}>
-          {t('app.createStarter')}
-        </button>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={p.onOpenIdea}>
-          {t('app.idea')}
-        </button>
-        {p.project && (
-          <>
-            <button type="button" className="btn btn--ghost btn--sm" onClick={p.onOpenCheckpoints}>
-              {t('app.checkpoints')}
-            </button>
-            <button type="button" className="btn btn--ghost btn--sm" onClick={p.onOpenPublish}>
-              {t('app.publish')}
-            </button>
-          </>
-        )}
       </div>
 
       <div className="header-right">
@@ -184,16 +234,6 @@ export default function Header(p: Props) {
         )}
         <button
           type="button"
-          className={`toggle-pill ${p.autoMode ? 'toggle-pill--on' : ''}`}
-          onClick={() => void p.onToggleAuto()}
-          title={p.autoMode ? t('app.autoOn') : t('app.autoOff')}
-          aria-pressed={p.autoMode}
-        >
-          <span className="toggle-dot" />
-          {t('app.auto')}
-        </button>
-        <button
-          type="button"
           className={`toggle-pill toggle-pill--plan ${p.planMode ? 'toggle-pill--on' : ''}`}
           onClick={() => void p.onTogglePlan()}
           title={p.planMode ? t('app.planOn') : t('app.planOff')}
@@ -202,6 +242,21 @@ export default function Header(p: Props) {
           <span className="toggle-dot" />
           {t('app.plan')}
         </button>
+        <button
+          type="button"
+          className={`toggle-pill ${p.autoMode ? 'toggle-pill--on' : ''}`}
+          onClick={() => void p.onToggleAuto()}
+          title={p.autoMode ? t('app.autoOn') : t('app.autoOff')}
+          aria-pressed={p.autoMode}
+        >
+          <span className="toggle-dot" />
+          {t('app.auto')}
+        </button>
+        {p.project && (
+          <button type="button" className="btn btn--primary btn--sm" onClick={p.onOpenPublish}>
+            {t('app.publish')}
+          </button>
+        )}
         <span className={`mode-badge ${p.mode === 'live' ? 'mode-badge--live' : 'mode-badge--preview'}`}>
           <span className="mode-dot" />
           {p.mode === 'live' ? t('app.live') : t('app.previewMode')}
@@ -211,6 +266,7 @@ export default function Header(p: Props) {
             {p.model}
           </span>
         )}
+        <HeaderMenu {...p} />
         <button type="button" className="btn btn--ghost btn--sm" onClick={p.onOpenSettings}>
           {t('app.settings')}
         </button>

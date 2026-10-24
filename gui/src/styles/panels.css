@@ -3,14 +3,14 @@
 .modal--wide { width: min(560px, 100%); }
 .panel-sub { color: var(--text-dim); margin: 0 0 16px; line-height: 1.65; }
 .panel-textarea {
-  width: 100%; min-height: 74px; resize: vertical;
+  width: 100%; min-height: 64px; resize: vertical;
   background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  color: var(--text); font-family: inherit; font-size: 14.5px; padding: 12px 14px; outline: none;
+  color: var(--text); font-family: inherit; font-size: 13px; padding: 10px 12px; outline: none;
 }
 .panel-textarea:focus { border-color: rgba(255, 255, 255, 0.22); box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.08); }
 .idea-cards { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
 .idea-card {
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 15px 17px;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent);
   animation: modalIn 0.3s cubic-bezier(0.22, 0.9, 0.3, 1) both;
 }

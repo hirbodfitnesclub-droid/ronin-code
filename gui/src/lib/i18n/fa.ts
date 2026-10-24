@@ -232,6 +232,33 @@ export const fa: Record<StringKey, string> = {
   'account.logout': 'خروج',
   'account.balance': 'موجودی',
 
+  'app.more': 'اقدام‌های بیشتر',
+  'app.autoBanner':
+    'حالت خودکار روشن است — رونین دستورها و تغییرات را بدون پرسش اجرا می‌کند. نقاط بازگشت و «برگردان» همچنان فعال‌اند.',
+  'app.autoTurnOff': 'خاموش کن',
+
+  'nav.home': 'خانه',
+  'nav.workspace': 'محیط ساخت',
+  'nav.collapse': 'جمع کردن نوار کناری',
+  'nav.expand': 'باز کردن نوار کناری',
+
+  'home.title': 'می‌خواهی چه بسازی؟',
+  'home.subtitle': 'ایده‌ات را توصیف کن، با هوش مصنوعی بساز.',
+  'home.start': 'شروع ساخت',
+  'home.pathDirect': 'مستقیم بساز',
+  'home.pathDirectSub': 'توضیح بده و رونین همان لحظه می‌سازدش',
+  'home.pathIdea': 'روی ایده‌ام کار کنیم',
+  'home.pathIdeaSub': 'اول ایده‌ی یک‌خطی‌ات را به محصول شکل بده',
+  'home.pathStarter': 'از یک قالب شروع کنم',
+  'home.pathStarterSub': 'با یک پروژه‌ی شروع آماده آغاز کن',
+  'home.pathOpen': 'پروژه‌ی قبلی را باز کنم',
+  'home.pathOpenSub': 'یک پوشه‌ی پروژه از همین دستگاه انتخاب کن',
+  'home.continueTitle': 'از همان‌جا ادامه بده',
+  'home.continue': 'باز کردن محیط ساخت',
+  'home.noProject': 'هنوز پروژه‌ای باز نیست — از بالا شروع کن یا یک پوشه‌ی موجود را باز کن.',
+  'home.noModels': 'هنوز مدلی فعال نیست. برای شروع ساخت، اول مدل‌ها را فعال کن.',
+  'home.openSettings': 'باز کردن تنظیمات',
+
   'starters.title': 'شروع از یه قالب',
   'starters.classic': 'شروع کلاسیک',
 

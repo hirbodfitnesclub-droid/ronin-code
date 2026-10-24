@@ -5,6 +5,7 @@
 @import './tokens.css';
 @import './base.css';
 @import './layout.css';
+@import './shell.css';
 @import './header.css';
 @import './buttons.css';
 @import './chat.css';

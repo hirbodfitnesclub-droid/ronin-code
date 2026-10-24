@@ -2,12 +2,12 @@
 
 .starters-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 6px; }
 .starter-card {
-  text-align: start; padding: 16px; border-radius: var(--radius);
+  text-align: start; padding: 12px; border-radius: var(--radius);
   background: var(--bg-raised); border: 1px solid var(--border); color: var(--text);
   display: flex; flex-direction: column; gap: 5px;
   transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
 }
 .starter-card:hover { background: var(--bg-hover); transform: translateY(-1px); }
 .starter-card-dot { width: 10px; height: 10px; border-radius: 50%; margin-bottom: 4px; }
-.starter-card-name { font-weight: 650; font-size: 14px; }
+.starter-card-name { font-weight: 650; font-size: 13px; }
 .starter-card-tag { color: var(--text-faint); font-size: 12px; line-height: 1.55; }

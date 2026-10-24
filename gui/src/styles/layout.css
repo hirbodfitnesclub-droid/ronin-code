@@ -2,16 +2,32 @@
 
 .app { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
 
+/* body row: main content + the nav rail at the inline-end edge
+   (left in FA/RTL, right in EN/LTR — boards 01/08 put the rail there) */
+.app-body { flex: 1; display: flex; min-height: 0; }
+.app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+
 .main {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(360px, 5fr) 7fr;
+  grid-template-columns: var(--chat-w, 540px) 6px minmax(0, 1fr);
   min-height: 0;
 }
-.main--chat-only { grid-template-columns: minmax(360px, 720px) 40px; justify-content: center; }
+.main--chat-only { grid-template-columns: var(--chat-w, 540px) 6px 26px; }
+
+.col-divider {
+  cursor: col-resize; position: relative; z-index: 4;
+  background: transparent; touch-action: none;
+}
+.col-divider::after {
+  content: ''; position: absolute; inset: 0 2px;
+  border-radius: 2px; background: transparent; transition: background 0.15s ease;
+}
+.col-divider:hover::after, .col-divider--active::after { background: var(--accent); opacity: 0.55; }
 
 @media (max-width: 900px) {
-  .main { grid-template-columns: 1fr; }
+  .main, .main--chat-only { grid-template-columns: minmax(0, 1fr) 0 0; }
+  .col-divider { display: none; }
   .preview-panel { display: none; }
   .preview-reopen { display: none; }
 }

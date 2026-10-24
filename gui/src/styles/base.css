@@ -4,8 +4,8 @@ html, body, #root { height: 100%; }
 body {
   margin: 0;
   font-family: var(--font);
-  font-size: 14.5px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--text);
   background:
     radial-gradient(900px 480px at 78% -10%, rgba(229, 72, 77, 0.055), transparent 60%),

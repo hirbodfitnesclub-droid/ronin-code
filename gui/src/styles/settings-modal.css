@@ -8,28 +8,28 @@
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal {
-  width: min(440px, 100%); border-radius: 20px; padding: 22px;
+  width: min(440px, 100%); border-radius: var(--radius); padding: 18px;
   background: linear-gradient(180deg, var(--modal-from), var(--modal-to));
   border: 1px solid var(--border-strong);
   box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.85);
   animation: modalIn 0.24s cubic-bezier(0.22, 0.9, 0.3, 1) both;
 }
 @keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
-.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.modal-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.modal-head h2 { margin: 0; font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; }
 
-.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; }
-.field-label { font-size: 12.5px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.01em; }
-.field-hint { font-size: 11.5px; color: var(--text-faint); }
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.field-label { font-size: 12px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.01em; }
+.field-hint { font-size: 11px; color: var(--text-faint); }
 .field input, .field select {
   background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  color: var(--text); font-family: inherit; font-size: 14px; padding: 10px 12px; outline: none;
+  color: var(--text); font-family: inherit; font-size: 13px; padding: 7px 10px; outline: none; min-height: 30px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease; width: 100%;
 }
 .field input:focus, .field select:focus { border-color: rgba(255, 255, 255, 0.22); box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.08); }
 .field select option { background: var(--bg-raised); }
 
-.test-result { border-radius: var(--radius-sm); padding: 9px 12px; font-size: 13px; margin: 4px 0 12px; }
+.test-result { border-radius: var(--radius-sm); padding: 8px 11px; font-size: 12.5px; margin: 4px 0 10px; }
 .test-result--ok { color: var(--ok-text); background: rgba(70, 192, 122, 0.1); border: 1px solid rgba(70, 192, 122, 0.32); }
 .test-result--bad { color: var(--error-text); background: rgba(229, 72, 77, 0.1); border: 1px solid rgba(229, 72, 77, 0.32); }
 

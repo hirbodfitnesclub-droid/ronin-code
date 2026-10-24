@@ -230,6 +230,33 @@ export const en = {
   'account.logout': 'Sign out',
   'account.balance': 'Balance',
 
+  'app.more': 'More actions',
+  'app.autoBanner':
+    'Auto is on — Ronin runs commands and changes without asking. Checkpoints and Undo stay on.',
+  'app.autoTurnOff': 'Turn off',
+
+  'nav.home': 'Home',
+  'nav.workspace': 'Workspace',
+  'nav.collapse': 'Collapse sidebar',
+  'nav.expand': 'Expand sidebar',
+
+  'home.title': 'What do you want to build?',
+  'home.subtitle': 'Describe your idea — build it with AI.',
+  'home.start': 'Start building',
+  'home.pathDirect': 'Build it directly',
+  'home.pathDirectSub': 'Describe it and Ronin builds it right away',
+  'home.pathIdea': 'Work on my idea',
+  'home.pathIdeaSub': 'Shape a one-line idea into a product first',
+  'home.pathStarter': 'Start from a template',
+  'home.pathStarterSub': 'Begin from a ready-made starter project',
+  'home.pathOpen': 'Open an existing project',
+  'home.pathOpenSub': 'Pick a project folder from this device',
+  'home.continueTitle': 'Continue where you left off',
+  'home.continue': 'Open workspace',
+  'home.noProject': 'No project is open yet — start one above, or open an existing folder.',
+  'home.noModels': 'No models are enabled yet. Enable models first to start building.',
+  'home.openSettings': 'Open Settings',
+
   'starters.title': 'Start from a template',
   'starters.classic': 'Classic Starter',
 
