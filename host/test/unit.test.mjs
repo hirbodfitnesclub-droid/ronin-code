@@ -361,13 +361,15 @@ test("preview: document-like misses get the branded placeholder; asset misses st
 // never hang it forever. Uses a stubbed engine session (no provider,
 // no network); `idleTimeoutMs` shrinks the production 120s budget.
 
-function stubEngineSession({ promptImpl, onAbort } = {}) {
+function stubEngineSession({ promptImpl, onAbort, lastText = "", stats = null } = {}) {
   let listener = null;
   const session = {
     subscribe(cb) { listener = cb; return () => { listener = null; }; },
     prompt: promptImpl || (() => new Promise(() => {})),
     abort() { if (onAbort) onAbort(); return Promise.resolve(); },
     dispose() {},
+    getLastAssistantText: () => lastText,
+    getSessionStats: () => stats,
   };
   return { session, emit: (event) => { if (listener) listener(event); } };
 }
@@ -450,5 +452,57 @@ test("engine: healthy stream is untouched by the watchdog", async () => {
     assert.equal(aborts, 0);
   } finally {
     fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+// ---------------- plan/idea JSON-prompt watchdog ----------------
+// runJsonPrompt subscribes to no session events, so its watchdog is
+// a HARD budget from prompt start (same code/message as the live
+// watchdog). The stub engine stands in for the SDK; a temp
+// credentials file stands in for loadAuth/buildAttempts, which
+// runJsonPrompt still calls directly.
+
+test("json: stalled JSON prompt aborts and rejects with provider_timeout", async () => {
+  const { runJsonPrompt, ENGINE_IDLE_TIMEOUT_MESSAGE } = await import("../src/engine.js");
+  const credPath = path.join(process.env.RONIN_HOME, "auth.json");
+  fs.writeFileSync(credPath, JSON.stringify({ anthropic: ["test-key"] }) + "\n", { mode: 0o600 });
+  let aborts = 0;
+  const { session } = stubEngineSession({ onAbort: () => { aborts++; } });
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-json-"));
+  try {
+    await assert.rejects(
+      runJsonPrompt("plan this", project, { engineModule: stubEngineModule(session), idleTimeoutMs: 30 }),
+      (e) => {
+        assert.equal(e.code, "provider_timeout");
+        assert.equal(e.message, ENGINE_IDLE_TIMEOUT_MESSAGE);
+        assert.ok(!/test-key/.test(e.message), "no key material in the error");
+        return true;
+      },
+    );
+    assert.equal(aborts, 1);
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+    fs.rmSync(credPath, { force: true });
+  }
+});
+
+test("json: healthy JSON prompt resolves and never aborts", async () => {
+  const { runJsonPrompt } = await import("../src/engine.js");
+  const credPath = path.join(process.env.RONIN_HOME, "auth.json");
+  fs.writeFileSync(credPath, JSON.stringify({ anthropic: ["test-key"] }) + "\n", { mode: 0o600 });
+  let aborts = 0;
+  const { session } = stubEngineSession({
+    promptImpl: async () => {},
+    lastText: '{"steps":[{"title":"A","detail":"B"}]}',
+    onAbort: () => { aborts++; },
+  });
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "ronin-json-"));
+  try {
+    const text = await runJsonPrompt("plan this", project, { engineModule: stubEngineModule(session), idleTimeoutMs: 5000 });
+    assert.equal(text, '{"steps":[{"title":"A","detail":"B"}]}');
+    assert.equal(aborts, 0);
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+    fs.rmSync(credPath, { force: true });
   }
 });

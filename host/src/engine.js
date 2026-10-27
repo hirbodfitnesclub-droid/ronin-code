@@ -502,12 +502,13 @@ export function parseJsonBlock(text) {
 
 /** A tools-free engine call that must answer with JSON. Used by plan + idea flows. */
 
-export async function runJsonPrompt(promptText, project) {
+export async function runJsonPrompt(promptText, project, { engineModule = null, idleTimeoutMs = ENGINE_IDLE_TIMEOUT_MS } = {}) {
   const auth = loadAuth();
   const attempts = buildAttempts(auth);
   if (!attempts.length) return null;
   const a = attempts[0];
-  const engine = await import("@earendil-works/pi-coding-agent");
+  // `engineModule` is a test seam only: production always uses the real SDK.
+  const engine = engineModule ?? await import("@earendil-works/pi-coding-agent");
   const { createAgentSession, SessionManager, SettingsManager, ModelRuntime } = engine;
   if (a.providerId === "custom") {
     if (!config.baseUrl) return null;
@@ -540,8 +541,29 @@ export async function runJsonPrompt(promptText, project) {
     settingsManager: SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 1 } }),
     noTools: "all",
   });
+  // Hard watchdog: unlike runLiveAttempt this path subscribes to no
+  // session events, so nothing can reset the budget — the timer runs
+  // from prompt start and cannot be extended. On fire, abort
+  // best-effort (never awaited: a stalled transport may never unwind)
+  // and reject with the same human timeout error as the live-turn
+  // watchdog, so plan/idea callers see one consistent code.
+  let idleTimer = null;
+  let idleReject = null;
+  const idlePromise = new Promise((_, reject) => { idleReject = reject; });
+  const armIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (idleTimeoutMs > 0) {
+      idleTimer = setTimeout(() => {
+        try { Promise.resolve(session.abort()).catch(() => {}); } catch {}
+        const err = new Error(ENGINE_IDLE_TIMEOUT_MESSAGE);
+        err.code = "provider_timeout";
+        idleReject(err);
+      }, idleTimeoutMs);
+    }
+  };
   try {
-    await session.prompt(promptText);
+    armIdle();
+    await Promise.race([session.prompt(promptText), idlePromise]);
     const text = typeof session.getLastAssistantText === "function" ? session.getLastAssistantText() : "";
     const stats = typeof session.getSessionStats === "function" ? session.getSessionStats() : null;
     if (stats) {
@@ -553,6 +575,7 @@ export async function runJsonPrompt(promptText, project) {
     }
     return text || "";
   } finally {
+    if (idleTimer) clearTimeout(idleTimer);
     try { session.dispose(); } catch {}
   }
 }

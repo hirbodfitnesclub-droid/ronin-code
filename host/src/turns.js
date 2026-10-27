@@ -117,20 +117,27 @@ export async function matureIdea(idea, project) {
   const auth = loadAuth();
   const live = keyList(auth[config.provider]).length > 0;
   if (live) {
-    const text = await runJsonPrompt(
-      `A user has a one-line product idea. Mature it. Do not use tools. Reply with ONLY JSON: ` +
-      `{"audience":{"who":"...","pain":"..."}, "features":["...","..."], "plan":[{"title":"...","detail":"..."}]} ` +
-      `— 4-6 features, 3-5 plan steps, same language as the idea.\n\nIdea: ${idea}`,
-      project || os.homedir(),
-    );
-    const parsed = parseJsonBlock(text || "");
-    if (parsed && parsed.audience && Array.isArray(parsed.features) && Array.isArray(parsed.plan)) {
-      return {
-        audience: { who: String(parsed.audience.who || ""), pain: String(parsed.audience.pain || "") },
-        features: parsed.features.slice(0, 8).map(String),
-        plan: parsed.plan.slice(0, 8).map((s) => ({ title: String(s.title || ""), detail: String(s.detail || "") })),
-        simulated: false,
-      };
+    try {
+      const text = await runJsonPrompt(
+        `A user has a one-line product idea. Mature it. Do not use tools. Reply with ONLY JSON: ` +
+        `{"audience":{"who":"...","pain":"..."}, "features":["...","..."], "plan":[{"title":"...","detail":"..."}]} ` +
+        `— 4-6 features, 3-5 plan steps, same language as the idea.\n\nIdea: ${idea}`,
+        project || os.homedir(),
+      );
+      const parsed = parseJsonBlock(text || "");
+      if (parsed && parsed.audience && Array.isArray(parsed.features) && Array.isArray(parsed.plan)) {
+        return {
+          audience: { who: String(parsed.audience.who || ""), pain: String(parsed.audience.pain || "") },
+          features: parsed.features.slice(0, 8).map(String),
+          plan: parsed.plan.slice(0, 8).map((s) => ({ title: String(s.title || ""), detail: String(s.detail || "") })),
+          simulated: false,
+        };
+      }
+    } catch (e) {
+      // Same shape as proposePlan: a failed (or timed-out) JSON call
+      // falls back to simulated content instead of hanging or
+      // failing the idea screen.
+      log.error("idea_mature_failed", { error: cleanError(e) });
     }
   }
   const fa = config.language === "fa";
